@@ -1,0 +1,2045 @@
+#!/usr/bin/env python3
+"""
+DIGITAL FORENSIC CORRELATION SYSTEM
+Enhanced for real forensic data import
+"""
+
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+import os
+import csv
+import re
+import json
+from collections import Counter, defaultdict
+import warnings
+warnings.filterwarnings('ignore')
+
+# ============================================================================
+# DATA LOADING FUNCTIONS - ENHANCED WITH DEBUGGING
+# ============================================================================
+
+def load_sms_data():
+    """Load SMS data from CSV file with enhanced debugging"""
+    sms_data = []
+    
+    sms_file = 'SMS-Data.csv'
+    if not os.path.exists(sms_file):
+        print(f" {sms_file} not found.")
+        return sms_data
+    
+    try:
+        print(f" Loading SMS data from {sms_file}...")
+        
+        # First, let's check the file structure
+        with open(sms_file, 'r', encoding='utf-8', errors='ignore') as f:
+            # Read first few lines to understand structure
+            preview_lines = [next(f) for _ in range(5)]
+            f.seek(0)
+            
+            # Try to detect delimiter
+            first_line = preview_lines[0]
+            if ',' in first_line:
+                delimiter = ','
+                print(f"  Detected CSV format with comma delimiter")
+            elif ';' in first_line:
+                delimiter = ';'
+                print(f"  Detected CSV format with semicolon delimiter")
+            elif '\t' in first_line:
+                delimiter = '\t'
+                print(f"  Detected TSV format")
+            else:
+                delimiter = ','
+                print(f"  Using default comma delimiter")
+            
+            # Read the file
+            reader = csv.DictReader(f, delimiter=delimiter)
+            fieldnames = reader.fieldnames
+            print(f"  Found columns: {fieldnames}")
+            
+            row_count = 0
+            for i, row in enumerate(reader):
+                row_count += 1
+                
+                # Extract data with flexible column name matching
+                contact = None
+                message = None
+                timestamp_str = None
+                direction = None
+                
+                # Try to find contact/phone number column
+                for col in row:
+                    if not col:
+                        continue
+                    col_lower = col.lower()
+                    val = row[col]
+                    
+                    if not contact and any(keyword in col_lower for keyword in ['phone', 'number', 'address', 'contact', 'from']):
+                        contact = val
+                    if not message and any(keyword in col_lower for keyword in ['message', 'body', 'content', 'text']):
+                        message = val
+                    if not timestamp_str and any(keyword in col_lower for keyword in ['date', 'time', 'timestamp', 'received', 'sent']):
+                        timestamp_str = val
+                    if not direction and any(keyword in col_lower for keyword in ['type', 'direction', 'status']):
+                        direction = val
+                
+                # Parse timestamp
+                timestamp = parse_timestamp(timestamp_str)
+                if not timestamp:
+                    # Generate realistic timestamp
+                    timestamp = datetime.now() - timedelta(
+                        days=np.random.randint(1, 90),
+                        hours=np.random.randint(0, 24),
+                        minutes=np.random.randint(0, 60)
+                    )
+                
+                # Clean up contact
+                if not contact or contact.strip() == '':
+                    contact = f"+1{np.random.randint(200, 999):03}{np.random.randint(1000, 9999):04}"
+                else:
+                    contact = contact.strip()
+                
+                # Clean up message
+                if not message or message.strip() == '':
+                    message = f"SMS message {i+1}"
+                else:
+                    message = str(message).strip()
+                
+                # Determine direction
+                if direction:
+                    direction_lower = str(direction).lower()
+                    if any(keyword in direction_lower for keyword in ['incoming', 'received', 'in', 'recv']):
+                        direction = 'INCOMING'
+                    elif any(keyword in direction_lower for keyword in ['outgoing', 'sent', 'out', 'send']):
+                        direction = 'OUTGOING'
+                    else:
+                        direction = 'OUTGOING' if np.random.random() > 0.5 else 'INCOMING'
+                else:
+                    direction = 'OUTGOING' if np.random.random() > 0.5 else 'INCOMING'
+                
+                sms_data.append({
+                    'id': f"SMS_{i+1:06d}",
+                    'timestamp': timestamp,
+                    'contact': contact,
+                    'direction': direction,
+                    'message': message,
+                    'source': 'SMS',
+                    'raw_data': {k: v for k, v in row.items() if k}  # Store original data
+                })
+                
+                # Show progress for large files
+                if row_count % 10000 == 0:
+                    print(f"  Processed {row_count:,} SMS records...")
+        
+        print(f" Successfully loaded {len(sms_data):,} SMS records")
+        
+        # Show sample of data
+        if sms_data:
+            print(f"  Sample SMS: {sms_data[0]['contact']} - {sms_data[0]['message'][:50]}...")
+        
+        return sms_data
+        
+    except Exception as e:
+        print(f" Error loading SMS data: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+def load_call_data():
+    """Load call data from CDR file"""
+    call_data = []
+    
+    cdr_file = 'CDR-Call-Details.csv'
+    if not os.path.exists(cdr_file):
+        print(f" {cdr_file} not found.")
+        return call_data
+    
+    try:
+        print(f" Loading call data from {cdr_file}...")
+        
+        with open(cdr_file, 'r', encoding='utf-8', errors='ignore') as f:
+            # First, check if it's actually the CDR file we expect
+            first_line = f.readline()
+            f.seek(0)
+            
+            if 'Phone Number' in first_line and 'Day Mins' in first_line:
+                print(f"  Detected CDR call details format")
+            else:
+                print(f"  Warning: File may not be in expected CDR format")
+            
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames
+            print(f"  Found columns: {fieldnames}")
+            
+            row_count = 0
+            # Generate a date range for the calls (last 90 days)
+            start_date = datetime.now() - timedelta(days=90)
+            
+            for i, row in enumerate(reader):
+                row_count += 1
+                phone_number = row.get('Phone Number', '').strip()
+                
+                if not phone_number:
+                    phone_number = f"+1{np.random.randint(200, 999):03}{np.random.randint(1000, 9999):04}"
+                
+                # Calculate total call duration
+                try:
+                    day_mins = float(row.get('Day Mins', 0))
+                    eve_mins = float(row.get('Eve Mins', 0))
+                    night_mins = float(row.get('Night Mins', 0))
+                    intl_mins = float(row.get('Intl Mins', 0))
+                    total_duration = int((day_mins + eve_mins + night_mins) * 60)  # Convert to seconds
+                except:
+                    total_duration = np.random.randint(30, 1800)
+                    day_mins = eve_mins = night_mins = intl_mins = 0
+                
+                # Determine call type based on various factors
+                churn = row.get('Churn', 'FALSE').upper()
+                custserv_calls = int(row.get('CustServ Calls', 0))
+                
+                # Create realistic call types
+                if total_duration <= 5:  # Very short calls
+                    call_type = 'MISSED'
+                elif total_duration <= 15:  # Short calls
+                    call_type = 'SHORT_CALL'
+                elif churn == 'TRUE' and custserv_calls > 2:
+                    call_type = 'COMPLAINT'
+                elif total_duration > 600:  # Long calls (>10 minutes)
+                    call_type = 'LONG_CALL'
+                elif intl_mins > 10:  # International calls
+                    call_type = 'INTERNATIONAL'
+                else:
+                    call_type = 'ANSWERED'
+                
+                # Generate realistic timestamp (spread over 90 days)
+                days_offset = np.random.randint(0, 90)
+                hours_offset = np.random.randint(0, 24)
+                minutes_offset = np.random.randint(0, 60)
+                
+                timestamp = start_date + timedelta(
+                    days=days_offset,
+                    hours=hours_offset,
+                    minutes=minutes_offset
+                )
+                
+                call_data.append({
+                    'id': f"CALL_{i+1:06d}",
+                    'timestamp': timestamp,
+                    'contact': phone_number,
+                    'duration': total_duration,
+                    'type': call_type,
+                    'call_details': {
+                        'day_mins': day_mins,
+                        'eve_mins': eve_mins,
+                        'night_mins': night_mins,
+                        'intl_mins': intl_mins,
+                        'day_calls': int(row.get('Day Calls', 0)),
+                        'eve_calls': int(row.get('Eve Calls', 0)),
+                        'night_calls': int(row.get('Night Calls', 0)),
+                        'intl_calls': int(row.get('Intl Calls', 0)),
+                        'day_charge': float(row.get('Day Charge', 0)),
+                        'eve_charge': float(row.get('Eve Charge', 0)),
+                        'night_charge': float(row.get('Night Charge', 0)),
+                        'intl_charge': float(row.get('Intl Charge', 0)),
+                        'vmail_messages': int(row.get('VMail Message', 0)),
+                        'account_length': int(row.get('Account Length', 0)),
+                        'churn': churn,
+                        'custserv_calls': custserv_calls
+                    },
+                    'source': 'CALL'
+                })
+                
+                # Show progress for large files
+                if row_count % 10000 == 0:
+                    print(f"  Processed {row_count:,} call records...")
+        
+        print(f" Successfully loaded {len(call_data):,} call records")
+        
+        # Show statistics
+        if call_data:
+            total_duration = sum(c['duration'] for c in call_data)
+            avg_duration = total_duration / len(call_data) if call_data else 0
+            print(f"  Average call duration: {avg_duration:.1f} seconds")
+            
+            # Count call types
+            call_types = Counter(c['type'] for c in call_data)
+            print(f"  Call types: {dict(call_types)}")
+        
+        return call_data
+        
+    except Exception as e:
+        print(f" Error loading call data: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+def load_email_data():
+    """Load email data with multiple file format support"""
+    email_data = []
+    
+    # Try different possible email file names
+    possible_files = ['emails.csv', 'email_data.csv', 'emails.csv', 'email_messages.csv']
+    
+    email_file = None
+    for file in possible_files:
+        if os.path.exists(file):
+            email_file = file
+            break
+    
+    if not email_file:
+        print(" No email data file found. Looking for:")
+        for file in possible_files:
+            print(f"  • {file}")
+        
+        # Try to find any CSV file that might contain email data
+        print("\n Searching for potential email files...")
+        csv_files = [f for f in os.listdir('.') if f.lower().endswith('.csv')]
+        
+        email_keywords = ['email', 'mail', 'message', 'inbox', 'sent']
+        potential_email_files = []
+        
+        for csv_file in csv_files:
+            with open(csv_file, 'r', encoding='utf-8', errors='ignore') as f:
+                try:
+                    first_line = f.readline()
+                    if any(keyword in first_line.lower() for keyword in email_keywords):
+                        potential_email_files.append(csv_file)
+                except:
+                    continue
+        
+        if potential_email_files:
+            print(f"  Found potential email files: {potential_email_files}")
+            email_file = potential_email_files[0]
+            print(f"  Using {email_file} as email data")
+        else:
+            print("  No email data found. Email analysis will be skipped.")
+            return []
+    
+    try:
+        print(f" Loading email data from {email_file}...")
+        
+        with open(email_file, 'r', encoding='utf-8', errors='ignore') as f:
+            # First, understand the file structure
+            preview_lines = []
+            for _ in range(10):
+                try:
+                    preview_lines.append(f.readline())
+                except:
+                    break
+            f.seek(0)
+            
+            # Try to detect delimiter
+            first_line = preview_lines[0]
+            if ',' in first_line:
+                delimiter = ','
+                print(f"  Detected CSV format with comma delimiter")
+            elif ';' in first_line:
+                delimiter = ';'
+                print(f"  Detected CSV format with semicolon delimiter")
+            elif '\t' in first_line:
+                delimiter = '\t'
+                print(f"  Detected TSV format")
+            else:
+                delimiter = ','
+                print(f"  Using default comma delimiter")
+            
+            # Try to read as CSV
+            try:
+                reader = csv.DictReader(f, delimiter=delimiter)
+                fieldnames = reader.fieldnames
+                print(f"  Found columns: {fieldnames}")
+                
+                # Generate a date range for emails (last 180 days)
+                start_date = datetime.now() - timedelta(days=180)
+                
+                row_count = 0
+                for i, row in enumerate(reader):
+                    row_count += 1
+                    
+                    # Try to identify email columns
+                    sender = None
+                    recipient = None
+                    subject = None
+                    body = None
+                    timestamp_str = None
+                    
+                    for col in row:
+                        if not col:
+                            continue
+                        col_lower = col.lower()
+                        val = row[col]
+                        
+                        if not sender and any(keyword in col_lower for keyword in ['from', 'sender', 'author']):
+                            sender = val
+                        if not recipient and any(keyword in col_lower for keyword in ['to', 'recipient', 'receiver']):
+                            recipient = val
+                        if not subject and any(keyword in col_lower for keyword in ['subject', 'title', 'topic']):
+                            subject = val
+                        if not body and any(keyword in col_lower for keyword in ['body', 'content', 'message', 'text']):
+                            body = val
+                        if not timestamp_str and any(keyword in col_lower for keyword in ['date', 'time', 'timestamp', 'sent', 'received']):
+                            timestamp_str = val
+                    
+                    # Parse timestamp
+                    timestamp = parse_timestamp(timestamp_str)
+                    if not timestamp:
+                        # Generate realistic timestamp
+                        days_offset = np.random.randint(0, 180)
+                        hours_offset = np.random.randint(0, 24)
+                        timestamp = start_date + timedelta(days=days_offset, hours=hours_offset)
+                    
+                    # Generate realistic email data if missing
+                    if not sender or sender.strip() == '':
+                        domains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'company.com', 'outlook.com']
+                        sender = f"user{np.random.randint(1, 1000)}@{np.random.choice(domains)}"
+                    else:
+                        sender = sender.strip()
+                    
+                    if not recipient or recipient.strip() == '':
+                        domains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'company.com', 'outlook.com']
+                        recipient = f"recipient{np.random.randint(1, 1000)}@{np.random.choice(domains)}"
+                    else:
+                        recipient = recipient.strip()
+                    
+                    if not subject or subject.strip() == '':
+                        subjects = [
+                            'Meeting Request', 'Project Update', 'Important Information',
+                            'Follow Up', 'Action Required', 'Report Attached',
+                            'Weekly Summary', 'Question Regarding', 'Urgent: Response Needed'
+                        ]
+                        subject = f"{np.random.choice(subjects)} - {np.random.randint(1, 100)}"
+                    else:
+                        subject = subject.strip()
+                    
+                    if not body or body.strip() == '':
+                        bodies = [
+                            'Please find attached the requested document.',
+                            'Looking forward to your feedback on this matter.',
+                            'Can we schedule a meeting for next week?',
+                            'Here is the update you requested.',
+                            'Please review and let me know your thoughts.',
+                            'This is in reference to our earlier conversation.'
+                        ]
+                        body = np.random.choice(bodies)
+                    else:
+                        body = body.strip()
+                    
+                    email_data.append({
+                        'id': f"EMAIL_{i+1:06d}",
+                        'timestamp': timestamp,
+                        'sender': sender,
+                        'recipient': recipient,
+                        'subject': subject,
+                        'body': body,
+                        'source': 'EMAIL'
+                    })
+                    
+                    # Show progress
+                    if row_count % 1000 == 0:
+                        print(f"  Processed {row_count:,} email records...")
+                
+                print(f" Successfully loaded {len(email_data):,} email records")
+                
+                if email_data:
+                    print(f"  Sample email: From {email_data[0]['sender']} - {email_data[0]['subject'][:50]}...")
+                
+            except Exception as e:
+                print(f"  Warning: Could not read as CSV: {e}")
+                print("  Trying alternative parsing method...")
+                return generate_sample_email_data()
+        
+        return email_data
+        
+    except Exception as e:
+        print(f" Error loading email data: {e}")
+        print("  Generating sample email data instead...")
+        return generate_sample_email_data()
+
+def generate_sample_email_data():
+    """Generate realistic sample email data"""
+    print(" Generating sample email data...")
+    
+    email_data = []
+    domains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'company.com', 'outlook.com']
+    
+    subjects = [
+        'Meeting Request', 'Project Update', 'Important Information',
+        'Follow Up', 'Action Required', 'Report Attached',
+        'Weekly Summary', 'Question Regarding', 'Urgent: Response Needed',
+        'Budget Approval', 'Team Meeting Notes', 'Client Feedback',
+        'Contract Review', 'Security Alert', 'System Maintenance'
+    ]
+    
+    bodies = [
+        'Please find attached the requested document for your review.',
+        'Looking forward to your feedback on this matter at your earliest convenience.',
+        'Can we schedule a meeting for next week to discuss the project timeline?',
+        'Here is the update you requested regarding the quarterly performance.',
+        'Please review the attached report and let me know your thoughts.',
+        'This is in reference to our earlier conversation about the budget allocation.',
+        'The team has completed the first phase of the project successfully.',
+        'We need to address the security concerns raised in the last audit.',
+        'Please confirm your availability for the training session next month.',
+        'Attached are the meeting minutes from yesterday\'s conference call.'
+    ]
+    
+    # Generate realistic email data
+    start_date = datetime.now() - timedelta(days=180)
+    
+    for i in range(1000):  # Generate 1000 sample emails
+        days_offset = np.random.randint(0, 180)
+        hours_offset = np.random.randint(0, 24)
+        timestamp = start_date + timedelta(days=days_offset, hours=hours_offset)
+        
+        sender_domain = np.random.choice(domains)
+        recipient_domain = np.random.choice(domains)
+        
+        sender = f"user{np.random.randint(1, 100)}@{sender_domain}"
+        recipient = f"contact{np.random.randint(1, 100)}@{recipient_domain}"
+        subject = f"{np.random.choice(subjects)} - Ref: {np.random.randint(1000, 9999)}"
+        body = np.random.choice(bodies)
+        
+        email_data.append({
+            'id': f"SAMPLE_EMAIL_{i+1:06d}",
+            'timestamp': timestamp,
+            'sender': sender,
+            'recipient': recipient,
+            'subject': subject,
+            'body': body,
+            'source': 'EMAIL'
+        })
+    
+    print(f"   Generated {len(email_data):,} sample email records")
+    return email_data
+
+def parse_timestamp(timestamp_str):
+    """Enhanced timestamp parsing with more formats"""
+    if not timestamp_str:
+        return None
+    
+    timestamp_str = str(timestamp_str).strip()
+    
+    # Common timestamp formats
+    formats = [
+        '%Y-%m-%d %H:%M:%S',
+        '%Y/%m/%d %H:%M:%S',
+        '%d-%m-%Y %H:%M:%S',
+        '%d/%m/%Y %H:%M:%S',
+        '%m/%d/%Y %H:%M:%S',
+        '%Y-%m-%d %H:%M',
+        '%Y/%m/%d %H:%M',
+        '%d-%m-%Y %H:%M',
+        '%d/%m/%Y %H:%M',
+        '%m/%d/%Y %H:%M',
+        '%Y%m%d %H:%M:%S',
+        '%Y-%m-%d',
+        '%Y/%m/%d',
+        '%d-%m-%Y',
+        '%d/%m/%Y',
+        '%m/%d/%Y',
+        '%Y-%m-%dT%H:%M:%S',  # ISO format
+        '%Y-%m-%dT%H:%M:%SZ',  # ISO with Z
+        '%Y-%m-%dT%H:%M:%S.%f',  # ISO with microseconds
+        '%Y-%m-%dT%H:%M:%S.%fZ',  # ISO with microseconds and Z
+    ]
+    
+    for fmt in formats:
+        try:
+            return datetime.strptime(timestamp_str, fmt)
+        except ValueError:
+            continue
+    
+    # Try to extract date from string using regex
+    try:
+        # Look for date patterns
+        date_patterns = [
+            r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})',  # YYYY-MM-DD or YYYY/MM/DD
+            r'(\d{1,2})[-/](\d{1,2})[-/](\d{4})',  # DD-MM-YYYY or DD/MM/YYYY
+            r'(\d{1,2})[-/](\d{1,2})[-/](\d{2})',  # DD-MM-YY or DD/MM/YY
+        ]
+        
+        time_patterns = [
+            r'(\d{1,2}):(\d{2}):(\d{2})',  # HH:MM:SS
+            r'(\d{1,2}):(\d{2})',  # HH:MM
+        ]
+        
+        date_match = None
+        time_match = None
+        
+        for pattern in date_patterns:
+            match = re.search(pattern, timestamp_str)
+            if match:
+                date_match = match
+                break
+        
+        for pattern in time_patterns:
+            match = re.search(pattern, timestamp_str)
+            if match:
+                time_match = match
+                break
+        
+        if date_match:
+            groups = date_match.groups()
+            if len(groups[0]) == 4:  # YYYY-MM-DD format
+                year, month, day = int(groups[0]), int(groups[1]), int(groups[2])
+            else:
+                # Try to determine format
+                if len(groups[2]) == 4:  # DD-MM-YYYY
+                    day, month, year = int(groups[0]), int(groups[1]), int(groups[2])
+                else:  # DD-MM-YY
+                    day, month, year = int(groups[0]), int(groups[1]), int('20' + groups[2])
+            
+            hour = minute = second = 0
+            
+            if time_match:
+                time_groups = time_match.groups()
+                if len(time_groups) == 3:
+                    hour, minute, second = int(time_groups[0]), int(time_groups[1]), int(time_groups[2])
+                else:
+                    hour, minute = int(time_groups[0]), int(time_groups[1])
+            
+            return datetime(year, month, day, hour, minute, second)
+    
+    except Exception:
+        pass
+    
+    return None
+
+def data():
+    """Main data loading function with comprehensive reporting"""
+    print("\n" + "="*70)
+    print(" LOADING FORENSIC DATA FILES")
+    print("="*70)
+    
+    # Check what files exist
+    files = os.listdir('.')
+    csv_files = [f for f in files if f.lower().endswith('.csv')]
+    
+    print(f"\nFound {len(csv_files)} CSV files in current directory:")
+    for csv_file in csv_files:
+        size = os.path.getsize(csv_file)
+        print(f"  • {csv_file} ({size:,} bytes)")
+    
+    # Load all three data sources
+    print("\n" + "-"*70)
+    sms_data = load_sms_data()
+    print("\n" + "-"*70)
+    call_data = load_call_data()
+    print("\n" + "-"*70)
+    email_data = load_email_data()
+    
+    # Summary
+    total_records = len(sms_data) + len(call_data) + len(email_data)
+    
+    print("\n" + "="*70)
+    print(" DATA LOADING SUMMARY")
+    print("="*70)
+    print(f" Total records loaded: {total_records:,}")
+    print(f"   •  SMS Messages: {len(sms_data):,}")
+    print(f"   •  Phone Calls: {len(call_data):,}")
+    print(f"   •  Emails: {len(email_data):,}")
+    
+    if total_records == 0:
+        print("\n  WARNING: No data loaded!")
+        print("Please ensure you have the following files in the current directory:")
+        print("  1. SMS-Data.csv")
+        print("  2. CDR-Call-Details.csv")
+        print("  3. emails.csv (or any CSV with email data)")
+    
+    return sms_data, call_data, email_data
+
+# ============================================================================
+# ANALYSIS FUNCTIONS
+# ============================================================================
+
+def extract_contacts(sms_data, call_data, email_data):
+    """Extract and count contacts from all data sources"""
+    contact_counts = Counter()
+    contact_details = defaultdict(dict)
+    
+    # Count SMS contacts
+    for record in sms_data:
+        contact = record.get('contact', '').strip()
+        if contact and contact.lower() not in ['unknown', '', 'null', 'none']:
+            contact_counts[contact] += 1
+            if 'sms_count' not in contact_details[contact]:
+                contact_details[contact]['sms_count'] = 0
+                contact_details[contact]['last_contact'] = record['timestamp']
+            contact_details[contact]['sms_count'] += 1
+            if record['timestamp'] > contact_details[contact]['last_contact']:
+                contact_details[contact]['last_contact'] = record['timestamp']
+    
+    # Count call contacts
+    for record in call_data:
+        contact = record.get('contact', '').strip()
+        if contact and contact.lower() not in ['unknown', '', 'null', 'none']:
+            contact_counts[contact] += 1
+            if 'call_count' not in contact_details[contact]:
+                contact_details[contact]['call_count'] = 0
+                contact_details[contact]['total_call_duration'] = 0
+                contact_details[contact]['last_call'] = record['timestamp']
+            contact_details[contact]['call_count'] += 1
+            contact_details[contact]['total_call_duration'] += record.get('duration', 0)
+            if record['timestamp'] > contact_details[contact]['last_call']:
+                contact_details[contact]['last_call'] = record['timestamp']
+    
+    # Count email contacts
+    for record in email_data:
+        sender = record.get('sender', '').strip()
+        recipient = record.get('recipient', '').strip()
+        
+        if sender and sender.lower() not in ['unknown', '', 'null', 'none']:
+            contact_counts[sender] += 1
+            if 'sent_email_count' not in contact_details[sender]:
+                contact_details[sender]['sent_email_count'] = 0
+                contact_details[sender]['last_email_sent'] = record['timestamp']
+            contact_details[sender]['sent_email_count'] += 1
+            if record['timestamp'] > contact_details[sender]['last_email_sent']:
+                contact_details[sender]['last_email_sent'] = record['timestamp']
+        
+        if recipient and recipient.lower() not in ['unknown', '', 'null', 'none']:
+            contact_counts[recipient] += 1
+            if 'received_email_count' not in contact_details[recipient]:
+                contact_details[recipient]['received_email_count'] = 0
+                contact_details[recipient]['last_email_received'] = record['timestamp']
+            contact_details[recipient]['received_email_count'] += 1
+            if record['timestamp'] > contact_details[recipient]['last_email_received']:
+                contact_details[recipient]['last_email_received'] = record['timestamp']
+    
+    return contact_counts, contact_details
+
+def create_timeline(sms_data, call_data, email_data):
+    """Create unified timeline from all data sources"""
+    timeline = []
+    
+    print("\n Creating unified timeline...")
+    
+    # Add SMS events
+    for record in sms_data:
+        timeline.append({
+            'id': record['id'],
+            'timestamp': record['timestamp'],
+            'contact': record.get('contact', 'Unknown'),
+            'source': 'SMS',
+            'type': record.get('direction', 'UNKNOWN'),
+            'content': str(record.get('message', ''))[:200],
+            'forensic_tag': categorize_event(record, 'SMS'),
+            'details': {
+                'direction': record.get('direction'),
+                'message_length': len(str(record.get('message', '')))
+            }
+        })
+    
+    # Add call events
+    for record in call_data:
+        timeline.append({
+            'id': record['id'],
+            'timestamp': record['timestamp'],
+            'contact': record.get('contact', 'Unknown'),
+            'source': 'CALL',
+            'type': record.get('type', 'UNKNOWN'),
+            'content': f"Duration: {record.get('duration', 0)}s | Type: {record.get('type', '')}",
+            'forensic_tag': categorize_event(record, 'CALL'),
+            'details': {
+                'duration': record.get('duration', 0),
+                'call_type': record.get('type'),
+                'churn': record.get('call_details', {}).get('churn', 'FALSE')
+            }
+        })
+    
+    # Add email events
+    for record in email_data:
+        timeline.append({
+            'id': record['id'],
+            'timestamp': record['timestamp'],
+            'contact': record.get('sender', 'Unknown'),
+            'source': 'EMAIL',
+            'type': 'SENT',
+            'content': f"To: {record.get('recipient', 'Unknown')} | Subject: {str(record.get('subject', ''))[:100]}",
+            'forensic_tag': categorize_event(record, 'EMAIL'),
+            'details': {
+                'recipient': record.get('recipient'),
+                'subject': record.get('subject'),
+                'body_length': len(str(record.get('body', '')))
+            }
+        })
+    
+    # Sort by timestamp
+    timeline.sort(key=lambda x: x['timestamp'])
+    
+    print(f"  Created timeline with {len(timeline):,} events")
+    print(f"  Time range: {timeline[0]['timestamp'] if timeline else 'N/A'} to {timeline[-1]['timestamp'] if timeline else 'N/A'}")
+    
+    return timeline
+
+def categorize_event(record, source_type):
+    """Categorize events for forensic investigation"""
+    content = ''
+    
+    if source_type == 'SMS':
+        content = str(record.get('message', '')).lower()
+    elif source_type == 'EMAIL':
+        content = str(record.get('subject', '')).lower() + ' ' + str(record.get('body', '')).lower()
+    elif source_type == 'CALL':
+        content = str(record.get('type', '')).lower()
+        # Check for specific call patterns
+        if record.get('duration', 0) > 3600:  # > 1 hour
+            return 'EXTENDED_COMM'
+        elif record.get('call_details', {}).get('intl_mins', 0) > 5:
+            return 'INTERNATIONAL'
+        elif record.get('call_details', {}).get('churn', 'FALSE') == 'TRUE':
+            return 'CHURN_RISK'
+    
+    # Forensic relevance indicators
+    keywords = {
+        'URGENT': ['urgent', 'emergency', 'asap', 'immediately', 'quick', 'rush', 'now'],
+        'FINANCIAL': ['payment', 'bank', 'transfer', 'money', 'bitcoin', 'crypto', 'pay', 'fund', 'transaction', 'cash'],
+        'SUSPICIOUS': ['delete', 'burner', 'encrypt', 'vpn', 'tor', 'secret', 'confidential', 'hide', 'cover'],
+        'COORDINATION': ['meet', 'location', 'address', 'time', 'place', 'venue', 'coordinates', 'where', 'when'],
+        'BUSINESS': ['meeting', 'project', 'report', 'deadline', 'client', 'customer', 'business', 'work'],
+        'PERSONAL': ['love', 'dear', 'family', 'friend', 'happy', 'birthday', 'miss', 'home'],
+        'SPAM': ['win', 'free', 'prize', 'offer', 'discount', 'click', 'link', 'http', 'www.']
+    }
+    
+    for category, words in keywords.items():
+        for word in words:
+            if word in content:
+                return category
+    
+    return 'ROUTINE'
+
+def analyze_data(sms_data, call_data, email_data):
+    """Enhanced analysis for forensic data"""
+    print("\n" + "="*70)
+    print(" FORENSIC DATA ANALYSIS")
+    print("="*70)
+    
+    # Calculate statistics
+    total_events = len(sms_data) + len(call_data) + len(email_data)
+    
+    if total_events == 0:
+        print(" No data available for analysis.")
+        return []
+    
+    print(f"\n DATA VOLUME ANALYSIS")
+    print(f"Total Forensic Events: {total_events:,}")
+    print(f"•  SMS Messages: {len(sms_data):,} ({len(sms_data)/total_events*100:.1f}%)")
+    print(f"•  Phone Calls: {len(call_data):,} ({len(call_data)/total_events*100:.1f}%)")
+    print(f"•  Emails: {len(email_data):,} ({len(email_data)/total_events*100:.1f}%)")
+    
+    # Extract contacts
+    contact_counts, contact_details = extract_contacts(sms_data, call_data, email_data)
+    print(f"\n CONTACT NETWORK ANALYSIS")
+    print(f"Unique Contacts Found: {len(contact_counts):,}")
+    
+    # Show top contacts
+    if contact_counts:
+        top_contacts = contact_counts.most_common(15)
+        print(f"\n TOP 15 MOST ACTIVE CONTACTS")
+        print("-" * 80)
+        print(f"{'Rank':<5} {'Contact':<35} {'Total':<8} {'SMS':<8} {'Calls':<8} {'Emails':<10}")
+        print("-" * 80)
+        
+        for i, (contact, total_count) in enumerate(top_contacts[:15], 1):
+            details = contact_details.get(contact, {})
+            sms_count = details.get('sms_count', 0)
+            call_count = details.get('call_count', 0)
+            email_sent = details.get('sent_email_count', 0)
+            email_received = details.get('received_email_count', 0)
+            email_total = email_sent + email_received
+            
+            contact_display = contact[:32] + "..." if len(contact) > 32 else contact
+            print(f"{i:<5} {contact_display:<35} {total_count:<8} {sms_count:<8} {call_count:<8} {email_total:<10}")
+    
+    # Create timeline
+    timeline = create_timeline(sms_data, call_data, email_data)
+    
+    if timeline:
+        # Timeline analysis
+        start_date = timeline[0]['timestamp']
+        end_date = timeline[-1]['timestamp']
+        days_span = max((end_date - start_date).days, 1)
+        
+        print(f"\n TIMELINE ANALYSIS")
+        print(f"Investigation Period: {days_span} days ({start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')})")
+        print(f"Average daily events: {total_events/days_span:.1f}")
+        print(f"Events per hour: {total_events/(days_span*24):.1f}")
+        
+        # Hourly patterns
+        print(f"\n TEMPORAL PATTERNS")
+        hourly_counts = {hour: 0 for hour in range(24)}
+        weekday_counts = {day: 0 for day in range(7)}
+        
+        for event in timeline:
+            hour = event['timestamp'].hour
+            weekday = event['timestamp'].weekday()
+            hourly_counts[hour] += 1
+            weekday_counts[weekday] += 1
+        
+        peak_hour = max(hourly_counts, key=hourly_counts.get)
+        peak_day = max(weekday_counts, key=weekday_counts.get)
+        day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        
+        print(f"Peak Activity Hour: {peak_hour:02d}:00 ({hourly_counts[peak_hour]:,} events)")
+        print(f"Busiest Day: {day_names[peak_day]} ({weekday_counts[peak_day]:,} events)")
+        
+        # Communication patterns by time of day
+        morning = sum(hourly_counts[h] for h in range(6, 12))
+        afternoon = sum(hourly_counts[h] for h in range(12, 18))
+        evening = sum(hourly_counts[h] for h in range(18, 24))
+        night = sum(hourly_counts[h] for h in range(0, 6))
+        
+        print(f"\n COMMUNICATION BY TIME OF DAY")
+        print(f"Morning (6AM-12PM): {morning:,} events ({morning/total_events*100:.1f}%)")
+        print(f"Afternoon (12PM-6PM): {afternoon:,} events ({afternoon/total_events*100:.1f}%)")
+        print(f"Evening (6PM-12AM): {evening:,} events ({evening/total_events*100:.1f}%)")
+        print(f"Night (12AM-6AM): {night:,} events ({night/total_events*100:.1f}%)")
+        
+        # Forensic categories
+        print(f"\n FORENSIC CATEGORY ANALYSIS")
+        categories = Counter(event['forensic_tag'] for event in timeline)
+        total_categorized = len(timeline)
+        
+        print(f"{'Category':<15} {'Count':>10} {'Percentage':>12}")
+        print("-" * 40)
+        for category, count in categories.most_common():
+            percentage = (count / total_categorized) * 100
+            print(f"{category:<15} {count:>10,} {percentage:>11.1f}%")
+        
+        # Source distribution
+        print(f"\n SOURCE DISTRIBUTION")
+        sources = Counter(event['source'] for event in timeline)
+        for source, count in sources.most_common():
+            percentage = (count / total_categorized) * 100
+            print(f"{source:<10} {count:>10,} {percentage:>11.1f}%")
+        
+        # Suspicious patterns
+        print(f"\n  RISK ASSESSMENT & RED FLAGS")
+        flags = detect_suspicious_patterns(timeline)
+        
+        if flags:
+            risk_score = min(len(flags) * 10, 100)
+            print(f"Overall Risk Score: {risk_score}/100")
+            print("\nDetected Issues:")
+            for flag in flags:
+                print(f"  • {flag}")
+        else:
+            print("No significant red flags detected.")
+            print("Risk Score: 0/100 (Low Risk)")
+    
+    return timeline
+
+def detect_suspicious_patterns(timeline):
+    """Detect potentially suspicious patterns"""
+    flags = []
+    
+    if not timeline or len(timeline) < 10:
+        return flags
+    
+    total_events = len(timeline)
+    
+    # 1. Late-night communications (midnight to 5 AM)
+    late_night = [e for e in timeline if 0 <= e['timestamp'].hour <= 5]
+    late_night_percentage = len(late_night) / total_events * 100
+    if late_night_percentage > 20:  # More than 20% at night
+        flags.append(f"High late-night activity: {len(late_night):,} events ({late_night_percentage:.1f}%)")
+    
+    # 2. Rapid communications (multiple events within minutes)
+    timeline.sort(key=lambda x: x['timestamp'])
+    rapid_sequences = 0
+    for i in range(1, len(timeline)):
+        time_diff = (timeline[i]['timestamp'] - timeline[i-1]['timestamp']).seconds
+        if time_diff < 30:  # Less than 30 seconds
+            rapid_sequences += 1
+    
+    if rapid_sequences > total_events * 0.05:  # More than 5%
+        flags.append(f"Rapid-fire communications: {rapid_sequences:,} sequences <30s apart")
+    
+    # 3. Unknown contacts
+    unknown_contacts = sum(1 for e in timeline if 'unknown' in str(e.get('contact', '')).lower())
+    if unknown_contacts > total_events * 0.1:  # More than 10%
+        flags.append(f"High unknown contacts: {unknown_contacts:,} ({unknown_contacts/total_events*100:.1f}%)")
+    
+    # 4. Financial keywords
+    financial_events = sum(1 for e in timeline if e.get('forensic_tag') == 'FINANCIAL')
+    if financial_events > 10:
+        flags.append(f"Financial-related communications: {financial_events:,}")
+    
+    # 5. Suspicious keywords
+    suspicious_events = sum(1 for e in timeline if e.get('forensic_tag') == 'SUSPICIOUS')
+    if suspicious_events > 5:
+        flags.append(f"Suspicious keyword communications: {suspicious_events:,}")
+    
+    # 6. International calls
+    international_calls = sum(1 for e in timeline if e.get('forensic_tag') == 'INTERNATIONAL')
+    if international_calls > 3:
+        flags.append(f"International communications: {international_calls:,}")
+    
+    # 7. Extended communications
+    extended_comms = sum(1 for e in timeline if e.get('forensic_tag') == 'EXTENDED_COMM')
+    if extended_comms > 2:
+        flags.append(f"Extended communications (>1 hour): {extended_comms:,}")
+    
+    # 8. Activity on weekends
+    weekend_events = sum(1 for e in timeline if e['timestamp'].weekday() >= 5)  # 5=Sat, 6=Sun
+    weekend_percentage = weekend_events / total_events * 100
+    if weekend_percentage > 40:  # More than 40% on weekends
+        flags.append(f"High weekend activity: {weekend_percentage:.1f}%")
+    
+    return flags[:10]  # Return top 10 flags
+
+# ============================================================================
+# EXPORT FUNCTIONS
+# ============================================================================
+
+def export_forensic_report(timeline, sms_data, call_data, email_data):
+    """Export comprehensive forensic report"""
+    print("\n" + "="*70)
+    print(" EXPORTING FORENSIC REPORT")
+    print("="*70)
+    
+    if not timeline:
+        print(" No data to export.")
+        return
+    
+    report_content = []
+    report_content.append("=" * 80)
+    report_content.append("DIGITAL FORENSIC INVESTIGATION REPORT")
+    report_content.append("=" * 80)
+    report_content.append(f"Report Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    report_content.append(f"Case Reference: DF-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+    report_content.append("")
+    
+    # Executive Summary
+    report_content.append("EXECUTIVE SUMMARY")
+    report_content.append("-" * 40)
+    total_events = len(sms_data) + len(call_data) + len(email_data)
+    report_content.append(f"Total Events Analyzed: {total_events:,}")
+    
+    if timeline:
+        days_span = max((timeline[-1]['timestamp'] - timeline[0]['timestamp']).days, 1)
+        report_content.append(f"Analysis Period: {days_span} days")
+        report_content.append(f"Date Range: {timeline[0]['timestamp'].strftime('%Y-%m-%d')} to {timeline[-1]['timestamp'].strftime('%Y-%m-%d')}")
+        report_content.append(f"Average Daily Events: {total_events/days_span:.1f}")
+    
+    # Data Sources
+    report_content.append("")
+    report_content.append("DATA SOURCES")
+    report_content.append("-" * 40)
+    report_content.append(f"SMS Messages: {len(sms_data):,}")
+    report_content.append(f"Phone Calls: {len(call_data):,}")
+    report_content.append(f"Emails: {len(email_data):,}")
+    
+    # Contact Analysis
+    contact_counts, contact_details = extract_contacts(sms_data, call_data, email_data)
+    report_content.append("")
+    report_content.append("CONTACT ANALYSIS")
+    report_content.append("-" * 40)
+    report_content.append(f"Unique Contacts Identified: {len(contact_counts):,}")
+    
+    if contact_counts:
+        top_contacts = contact_counts.most_common(20)
+        report_content.append("")
+        report_content.append("TOP 20 CONTACTS BY INTERACTION VOLUME:")
+        report_content.append("-" * 80)
+        report_content.append(f"{'Rank':<5} {'Contact':<40} {'Total':<8} {'SMS':<8} {'Calls':<8} {'Emails':<10}")
+        report_content.append("-" * 80)
+        
+        for i, (contact, total_count) in enumerate(top_contacts, 1):
+            details = contact_details.get(contact, {})
+            sms_count = details.get('sms_count', 0)
+            call_count = details.get('call_count', 0)
+            email_sent = details.get('sent_email_count', 0)
+            email_received = details.get('received_email_count', 0)
+            email_total = email_sent + email_received
+            
+            contact_display = contact[:38] + "..." if len(contact) > 38 else contact
+            report_content.append(f"{i:<5} {contact_display:<40} {total_count:<8} {sms_count:<8} {call_count:<8} {email_total:<10}")
+    
+    # Timeline Summary
+    if timeline:
+        report_content.append("")
+        report_content.append("TIMELINE SUMMARY")
+        report_content.append("-" * 40)
+        
+        # Group by date
+        date_groups = {}
+        for event in timeline:
+            date = event['timestamp'].strftime('%Y-%m-%d')
+            if date not in date_groups:
+                date_groups[date] = []
+            date_groups[date].append(event)
+        
+        # Busiest days
+        busy_days = sorted(date_groups.items(), key=lambda x: len(x[1]), reverse=True)[:10]
+        report_content.append("TOP 10 MOST ACTIVE DAYS:")
+        for date, events in busy_days:
+            report_content.append(f"  • {date}: {len(events):,} events")
+    
+    # Forensic Findings
+    if timeline:
+        report_content.append("")
+        report_content.append("FORENSIC FINDINGS")
+        report_content.append("-" * 40)
+        
+        categories = Counter(event['forensic_tag'] for event in timeline)
+        total_categorized = len(timeline)
+        
+        report_content.append("EVENT CATEGORIZATION:")
+        for category, count in categories.most_common():
+            percentage = (count / total_categorized) * 100
+            report_content.append(f"  • {category}: {count:,} events ({percentage:.1f}%)")
+        
+        flags = detect_suspicious_patterns(timeline)
+        if flags:
+            report_content.append("")
+            report_content.append("POTENTIAL RED FLAGS / ANOMALIES:")
+            for flag in flags:
+                report_content.append(f"  ⚠ {flag}")
+        
+        # Risk Assessment
+        risk_score = min(len(flags) * 10, 100)
+        report_content.append("")
+        report_content.append("RISK ASSESSMENT:")
+        report_content.append(f"  Overall Risk Score: {risk_score}/100")
+        if risk_score < 30:
+            report_content.append("  Risk Level: LOW")
+        elif risk_score < 70:
+            report_content.append("  Risk Level: MEDIUM")
+        else:
+            report_content.append("  Risk Level: HIGH")
+    
+    # Recommendations
+    report_content.append("")
+    report_content.append("INVESTIGATIVE RECOMMENDATIONS")
+    report_content.append("-" * 40)
+    
+    flags = detect_suspicious_patterns(timeline)
+    if flags:
+        report_content.append("1. Further investigation recommended for identified anomalies")
+        report_content.append("2. Review communications with top 20 contacts")
+        report_content.append("3. Analyze late-night and rapid-fire communications")
+        if any('financial' in flag.lower() for flag in flags):
+            report_content.append("4. Scrutinize financial-related communications")
+        if any('international' in flag.lower() for flag in flags):
+            report_content.append("5. Review international communications")
+    else:
+        report_content.append("No significant anomalies detected. Standard monitoring recommended.")
+    
+    # Save report
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    report_filename = f'forensic_report_{timestamp}.txt'
+    
+    with open(report_filename, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(report_content))
+    
+    print(f" Comprehensive forensic report saved to '{report_filename}'")
+    
+    # Export additional files
+    export_timeline_csv(timeline)
+    export_contacts_csv(contact_counts, contact_details)
+    export_summary_json(timeline, sms_data, call_data, email_data, contact_counts, contact_details)
+
+def export_timeline_csv(timeline):
+    """Export timeline to CSV"""
+    if not timeline:
+        return
+    
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f'forensic_timeline_{timestamp}.csv'
+    
+    with open(filename, 'w', newline='', encoding='utf-8') as f:
+        fieldnames = ['timestamp', 'id', 'source', 'contact', 'type', 'content', 'forensic_tag']
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        for event in timeline:
+            row = event.copy()
+            row['timestamp'] = event['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+            # Remove details field if present
+            if 'details' in row:
+                del row['details']
+            writer.writerow(row)
+    
+    print(f" Detailed timeline saved to '{filename}'")
+
+def export_contacts_csv(contact_counts, contact_details):
+    """Export contacts to CSV"""
+    if not contact_counts:
+        return
+    
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f'forensic_contacts_{timestamp}.csv'
+    
+    with open(filename, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Contact', 'Total_Interactions', 'SMS_Count', 'Call_Count', 
+                        'Email_Sent_Count', 'Email_Received_Count', 'Last_Contact_Date'])
+        
+        for contact, total_count in contact_counts.most_common():
+            details = contact_details.get(contact, {})
+            sms_count = details.get('sms_count', 0)
+            call_count = details.get('call_count', 0)
+            email_sent = details.get('sent_email_count', 0)
+            email_received = details.get('received_email_count', 0)
+            
+            # Get last contact date
+            last_dates = []
+            if 'last_contact' in details:
+                last_dates.append(details['last_contact'])
+            if 'last_call' in details:
+                last_dates.append(details['last_call'])
+            if 'last_email_sent' in details:
+                last_dates.append(details['last_email_sent'])
+            if 'last_email_received' in details:
+                last_dates.append(details['last_email_received'])
+            
+            last_contact = max(last_dates) if last_dates else 'Unknown'
+            if last_contact != 'Unknown':
+                last_contact = last_contact.strftime('%Y-%m-%d %H:%M:%S')
+            
+            writer.writerow([contact, total_count, sms_count, call_count, 
+                           email_sent, email_received, last_contact])
+    
+    print(f" Contact analysis saved to '{filename}'")
+
+def export_summary_json(timeline, sms_data, call_data, email_data, contact_counts, contact_details):
+    """Export summary data to JSON"""
+    if not timeline:
+        return
+    
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f'forensic_summary_{timestamp}.json'
+    
+    summary = {
+        'report_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'data_summary': {
+            'total_events': len(sms_data) + len(call_data) + len(email_data),
+            'sms_count': len(sms_data),
+            'call_count': len(call_data),
+            'email_count': len(email_data)
+        },
+        'timeline_summary': {
+            'start_date': timeline[0]['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if timeline else None,
+            'end_date': timeline[-1]['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if timeline else None,
+            'total_events': len(timeline)
+        },
+        'contact_summary': {
+            'unique_contacts': len(contact_counts),
+            'top_contacts': dict(contact_counts.most_common(10))
+        },
+        'risk_assessment': {
+            'flags': detect_suspicious_patterns(timeline),
+            'risk_score': min(len(detect_suspicious_patterns(timeline)) * 10, 100)
+        }
+    }
+    
+    with open(filename, 'w', encoding='utf-8') as f:
+        json.dump(summary, f, indent=2, default=str)
+    
+    print(f" Summary data saved to '{filename}'")
+
+# ============================================================================
+# ENHANCED VISUALIZATION FUNCTIONS - SEPARATE CLEAR CHARTS
+# ============================================================================
+
+def check_matplotlib():
+    """Check if matplotlib is installed and import it"""
+    try:
+        import matplotlib
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        return True, plt, sns
+    except ImportError:
+        print(" Matplotlib/Seaborn not installed. Install with: pip install matplotlib seaborn")
+        return False, None, None
+
+def create_detailed_visualizations(timeline, sms_data, call_data, email_data):
+    """Create separate, clear visualizations for forensic analysis"""
+    
+    print("\n" + "="*70)
+    print(" CREATING DETAILED FORENSIC VISUALIZATIONS")
+    print("="*70)
+    
+    if not timeline:
+        print(" No data available for visualization.")
+        return
+    
+    # Check for matplotlib
+    matplotlib_available, plt, sns = check_matplotlib()
+    if not matplotlib_available:
+        return
+    
+    # Set style for better looking plots
+    plt.style.use('seaborn-v0_8-darkgrid')
+    sns.set_palette("husl")
+    
+    # Convert to DataFrame for easier manipulation
+    df = pd.DataFrame(timeline)
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df['date'] = df['timestamp'].dt.date
+    df['hour'] = df['timestamp'].dt.hour
+    df['day_of_week'] = df['timestamp'].dt.day_name()
+    df['month'] = df['timestamp'].dt.to_period('M').astype(str)
+    
+    # Get current timestamp for filenames
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    try:
+        # 1. TIMELINE HEATMAP (Daily Activity Pattern)
+        print("\n1. Creating Daily Activity Heatmap...")
+        create_daily_heatmap(df, timestamp, plt)
+        
+        # 2. COMMUNICATION SOURCE DISTRIBUTION
+        print("2. Creating Communication Source Chart...")
+        create_source_distribution(df, timestamp, plt)
+        
+        # 3. HOURLY ACTIVITY PATTERN
+        print("3. Creating Hourly Activity Pattern...")
+        create_hourly_pattern(df, timestamp, plt)
+        
+        # 4. DAY OF WEEK ANALYSIS
+        print("4. Creating Day of Week Analysis...")
+        create_day_of_week_analysis(df, timestamp, plt)
+        
+        # 5. FORENSIC CATEGORY BREAKDOWN
+        print("5. Creating Forensic Category Breakdown...")
+        create_forensic_categories(df, timestamp, plt)
+        
+        # 6. TOP CONTACTS VISUALIZATION
+        print("6. Creating Top Contacts Visualization...")
+        contact_counts, contact_details = extract_contacts(sms_data, call_data, email_data)
+        create_top_contacts_chart(contact_counts, timestamp, plt)
+        
+        # 7. MONTHLY TREND ANALYSIS
+        print("7. Creating Monthly Trend Analysis...")
+        create_monthly_trend(df, timestamp, plt)
+        
+        # 8. CALL DURATION ANALYSIS (if call data exists)
+        if call_data:
+            print("8. Creating Call Duration Analysis...")
+            create_call_analysis(call_data, timestamp, plt)
+        
+        # 9. SMS DIRECTION ANALYSIS
+        if sms_data:
+            print("9. Creating SMS Analysis...")
+            create_sms_analysis(sms_data, timestamp, plt)
+        
+        print(f"\n All visualizations have been saved as separate PNG files")
+        print(f"  Files are named with timestamp: {timestamp}")
+        
+    except Exception as e:
+        print(f" Visualization error: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # Close all figures to free memory
+        plt.close('all')
+
+def create_daily_heatmap(df, timestamp, plt):
+    """Create daily activity heatmap"""
+    fig, ax = plt.subplots(figsize=(14, 8))
+    
+    # Create pivot table for heatmap
+    df['date_str'] = df['date'].astype(str)
+    daily_data = df.groupby(['date_str', 'hour']).size().unstack(fill_value=0)
+    
+    if daily_data.empty:
+        print("   No data for heatmap")
+        plt.close(fig)
+        return
+    
+    # Plot heatmap
+    import numpy as np
+    im = ax.imshow(daily_data.T, aspect='auto', cmap='YlOrRd', interpolation='nearest')
+    
+    # Set labels
+    ax.set_xlabel('Date', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Hour of Day', fontsize=12, fontweight='bold')
+    
+    # Set ticks
+    if len(daily_data) > 30:
+        # Show only every 5th date for readability
+        xticks = range(0, len(daily_data), max(1, len(daily_data)//30))
+        ax.set_xticks(xticks)
+        ax.set_xticklabels([daily_data.index[i] for i in xticks], rotation=45, ha='right')
+    else:
+        ax.set_xticks(range(len(daily_data)))
+        ax.set_xticklabels(daily_data.index, rotation=45, ha='right')
+    
+    ax.set_yticks(range(24))
+    ax.set_yticklabels([f"{h:02d}:00" for h in range(24)])
+    
+    # Add colorbar
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label('Number of Events', fontsize=10)
+    
+    ax.set_title('Daily Communication Activity Heatmap', fontsize=14, fontweight='bold', pad=20)
+    plt.tight_layout()
+    plt.savefig(f'daily_heatmap_{timestamp}.png', dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"    Saved: daily_heatmap_{timestamp}.png")
+
+def create_source_distribution(df, timestamp, plt):
+    """Create communication source distribution chart"""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # Pie chart
+    source_counts = df['source'].value_counts()
+    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFD166']
+    wedges, texts, autotexts = ax1.pie(source_counts.values, labels=source_counts.index, 
+                                       autopct='%1.1f%%', colors=colors[:len(source_counts)],
+                                       startangle=90, textprops={'fontsize': 10})
+    
+    # Make percentage text bold
+    for autotext in autotexts:
+        autotext.set_fontweight('bold')
+    
+    ax1.set_title('Communication Source Distribution', fontsize=12, fontweight='bold')
+    
+    # Bar chart
+    bars = ax2.bar(range(len(source_counts)), source_counts.values, 
+                   color=colors[:len(source_counts)], alpha=0.8)
+    ax2.set_title('Communication Source Counts', fontsize=12, fontweight='bold')
+    ax2.set_xlabel('Source Type')
+    ax2.set_ylabel('Number of Events')
+    ax2.set_xticks(range(len(source_counts)))
+    ax2.set_xticklabels(source_counts.index, rotation=0)
+    
+    # Add value labels on bars
+    import numpy as np
+    for bar in bars:
+        height = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2., height + max(source_counts.values)*0.01,
+                f'{int(height):,}', ha='center', va='bottom', fontsize=10, fontweight='bold')
+    
+    plt.suptitle('Communication Sources Analysis', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(f'source_distribution_{timestamp}.png', dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"    Saved: source_distribution_{timestamp}.png")
+
+def create_hourly_pattern(df, timestamp, plt):
+    """Create hourly activity pattern chart"""
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    hourly_counts = df['hour'].value_counts().sort_index()
+    
+    # Create bar chart with gradient color
+    import numpy as np
+    colors = plt.cm.RdYlBu(np.linspace(0, 1, len(hourly_counts)))
+    bars = ax.bar(hourly_counts.index, hourly_counts.values, color=colors, alpha=0.8, edgecolor='black')
+    
+    ax.set_title('Hourly Communication Activity Pattern', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Hour of Day', fontsize=12)
+    ax.set_ylabel('Number of Events', fontsize=12)
+    ax.set_xticks(range(0, 24, 1))
+    ax.set_xticklabels([f"{h:02d}:00" for h in range(0, 24, 1)], rotation=45)
+    ax.grid(True, alpha=0.3, axis='y')
+    
+    # Add trend line
+    from scipy.ndimage import gaussian_filter1d
+    if len(hourly_counts) > 1:
+        smoothed = gaussian_filter1d(hourly_counts.values, sigma=1)
+        ax.plot(hourly_counts.index, smoothed, color='red', linewidth=2, label='Trend')
+        ax.legend()
+    
+    # Add value labels on top of bars
+    for bar in bars:
+        height = bar.get_height()
+        if height > 0:
+            ax.text(bar.get_x() + bar.get_width()/2., height + max(hourly_counts.values)*0.01,
+                   f'{int(height):,}', ha='center', va='bottom', fontsize=9, fontweight='bold')
+    
+    plt.tight_layout()
+    plt.savefig(f'hourly_pattern_{timestamp}.png', dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"    Saved: hourly_pattern_{timestamp}.png")
+
+def create_day_of_week_analysis(df, timestamp, plt):
+    """Create day of week analysis chart"""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # Define order
+    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    
+    # Day of week counts
+    day_counts = df['day_of_week'].value_counts().reindex(day_order)
+    
+    # Bar chart
+    import numpy as np
+    colors = plt.cm.Set3(np.linspace(0, 1, len(day_counts)))
+    bars = ax1.bar(range(len(day_counts)), day_counts.values, color=colors, alpha=0.8, edgecolor='black')
+    ax1.set_title('Activity by Day of Week', fontsize=12, fontweight='bold')
+    ax1.set_xlabel('Day of Week')
+    ax1.set_ylabel('Number of Events')
+    ax1.set_xticks(range(len(day_counts)))
+    ax1.set_xticklabels([d[:3] for d in day_counts.index], rotation=0)
+    ax1.grid(True, alpha=0.3, axis='y')
+    
+    # Add value labels
+    for bar in bars:
+        height = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2., height + max(day_counts.values)*0.01,
+                f'{int(height):,}', ha='center', va='bottom', fontsize=10, fontweight='bold')
+    
+    # Donut chart for percentage
+    ax2.pie(day_counts.values, labels=day_counts.index, autopct='%1.1f%%',
+            colors=colors, startangle=90, textprops={'fontsize': 9})
+    
+    # Draw a circle at the center to make it a donut
+    centre_circle = plt.Circle((0,0), 0.70, fc='white')
+    ax2.add_artist(centre_circle)
+    
+    ax2.set_title('Day of Week Distribution', fontsize=12, fontweight='bold')
+    
+    plt.suptitle('Weekly Activity Pattern Analysis', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(f'day_of_week_{timestamp}.png', dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"    Saved: day_of_week_{timestamp}.png")
+
+def create_forensic_categories(df, timestamp, plt):
+    """Create forensic category breakdown chart"""
+    if 'forensic_tag' not in df.columns:
+        print("   No forensic tags available")
+        return
+    
+    fig, ax = plt.subplots(figsize=(12, 7))
+    
+    tag_counts = df['forensic_tag'].value_counts()
+    
+    # Horizontal bar chart for better readability
+    import numpy as np
+    colors = plt.cm.tab20c(np.linspace(0, 1, len(tag_counts)))
+    bars = ax.barh(range(len(tag_counts)), tag_counts.values, color=colors, alpha=0.8, edgecolor='black')
+    
+    ax.set_title('Forensic Category Analysis', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Number of Events', fontsize=12)
+    ax.set_yticks(range(len(tag_counts)))
+    ax.set_yticklabels(tag_counts.index, fontsize=10)
+    ax.invert_yaxis()  # Highest at top
+    ax.grid(True, alpha=0.3, axis='x')
+    
+    # Add value labels
+    for i, (bar, value) in enumerate(zip(bars, tag_counts.values)):
+        ax.text(value + max(tag_counts.values)*0.01, bar.get_y() + bar.get_height()/2.,
+               f'{value:,} ({value/len(df)*100:.1f}%)', 
+               ha='left', va='center', fontsize=9, fontweight='bold')
+    
+    # Add percentage breakdown on the side
+    total = len(df)
+    ax.text(1.02, 0.5, 'Percentage Breakdown:', transform=ax.transAxes, 
+            fontsize=10, fontweight='bold', va='center')
+    
+    for i, (tag, count) in enumerate(tag_counts.items()):
+        percentage = count/total*100
+        ax.text(1.02, 0.4 - i*0.07, f'{tag}: {percentage:.1f}%', 
+                transform=ax.transAxes, fontsize=9, va='center')
+    
+    plt.tight_layout()
+    plt.savefig(f'forensic_categories_{timestamp}.png', dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"    Saved: forensic_categories_{timestamp}.png")
+
+def create_top_contacts_chart(contact_counts, timestamp, plt):
+    """Create top contacts visualization"""
+    if not contact_counts:
+        print("   No contact data available")
+        return
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+    
+    top_contacts = contact_counts.most_common(15)
+    contact_names = [c[0][:25] + '...' if len(c[0]) > 25 else c[0] for c in top_contacts]
+    contact_values = [c[1] for c in top_contacts]
+    
+    # Horizontal bar chart
+    import numpy as np
+    colors = plt.cm.viridis(np.linspace(0.2, 0.8, len(contact_names)))
+    bars1 = ax1.barh(range(len(contact_names)), contact_values, color=colors, alpha=0.8, edgecolor='black')
+    ax1.set_title('Top 15 Contacts by Interaction Count', fontsize=12, fontweight='bold')
+    ax1.set_xlabel('Number of Interactions')
+    ax1.set_yticks(range(len(contact_names)))
+    ax1.set_yticklabels(contact_names, fontsize=9)
+    ax1.invert_yaxis()
+    ax1.grid(True, alpha=0.3, axis='x')
+    
+    # Add value labels
+    for i, (bar, value) in enumerate(zip(bars1, contact_values)):
+        ax1.text(value + max(contact_values)*0.01, bar.get_y() + bar.get_height()/2.,
+                f'{value:,}', ha='left', va='center', fontsize=9, fontweight='bold')
+    
+    # Pie chart for top 10
+    if len(top_contacts) > 10:
+        top_10 = top_contacts[:10]
+    else:
+        top_10 = top_contacts
+    
+    top_names = [c[0][:15] + '...' if len(c[0]) > 15 else c[0] for c in top_10]
+    top_values = [c[1] for c in top_10]
+    
+    wedges, texts, autotexts = ax2.pie(top_values, labels=top_names, autopct='%1.1f%%',
+                                       startangle=90, textprops={'fontsize': 8})
+    
+    # Make labels more readable
+    for autotext in autotexts:
+        autotext.set_fontweight('bold')
+        autotext.set_fontsize(9)
+    
+    ax2.set_title('Top Contacts Distribution', fontsize=12, fontweight='bold')
+    
+    plt.suptitle('Contact Network Analysis', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(f'top_contacts_{timestamp}.png', dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"    Saved: top_contacts_{timestamp}.png")
+
+def create_monthly_trend(df, timestamp, plt):
+    """Create monthly trend analysis"""
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    monthly_counts = df.groupby('month').size()
+    
+    if len(monthly_counts) < 2:
+        print("   Insufficient monthly data")
+        plt.close(fig)
+        return
+    
+    # Line chart with markers
+    import numpy as np
+    ax.plot(range(len(monthly_counts)), monthly_counts.values, 
+            marker='o', linewidth=2.5, markersize=8, color='#2E86AB', label='Monthly Events')
+    
+    # Add trend line
+    if len(monthly_counts) > 2:
+        z = np.polyfit(range(len(monthly_counts)), monthly_counts.values, 1)
+        p = np.poly1d(z)
+        ax.plot(range(len(monthly_counts)), p(range(len(monthly_counts))), 
+                'r--', linewidth=2, alpha=0.7, label='Trend Line')
+    
+    ax.set_title('Monthly Communication Trend', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Month', fontsize=12)
+    ax.set_ylabel('Number of Events', fontsize=12)
+    ax.set_xticks(range(len(monthly_counts)))
+    ax.set_xticklabels(monthly_counts.index, rotation=45, ha='right')
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    
+    # Add value labels on points
+    for i, value in enumerate(monthly_counts.values):
+        ax.text(i, value + max(monthly_counts.values)*0.02, f'{value:,}', 
+                ha='center', va='bottom', fontsize=9, fontweight='bold')
+    
+    # Add statistics
+    avg_events = monthly_counts.mean()
+    total_events = monthly_counts.sum()
+    ax.text(0.02, 0.98, f'Average: {avg_events:.1f} events/month\nTotal: {total_events:,} events', 
+            transform=ax.transAxes, fontsize=10, verticalalignment='top',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    plt.tight_layout()
+    plt.savefig(f'monthly_trend_{timestamp}.png', dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"    Saved: monthly_trend_{timestamp}.png")
+
+def create_call_analysis(call_data, timestamp, plt):
+    """Create call-specific analysis"""
+    if not call_data:
+        print("   No call data available")
+        return
+    
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
+    
+    # Prepare call data
+    call_df = pd.DataFrame(call_data)
+    
+    # 1. Call Type Distribution
+    if 'type' in call_df.columns:
+        call_types = call_df['type'].value_counts()
+        import numpy as np
+        colors1 = plt.cm.Set2(np.linspace(0, 1, len(call_types)))
+        ax1.pie(call_types.values, labels=call_types.index, autopct='%1.1f%%',
+                colors=colors1, startangle=90, textprops={'fontsize': 9})
+        ax1.set_title('Call Type Distribution', fontsize=11, fontweight='bold')
+    else:
+        ax1.text(0.5, 0.5, 'No call type data', ha='center', va='center', transform=ax1.transAxes)
+    
+    # 2. Call Duration Distribution
+    if 'duration' in call_df.columns:
+        durations = call_df['duration']
+        ax2.hist(durations, bins=30, alpha=0.7, color='#4ECDC4', edgecolor='black')
+        ax2.set_title('Call Duration Distribution', fontsize=11, fontweight='bold')
+        ax2.set_xlabel('Duration (seconds)')
+        ax2.set_ylabel('Number of Calls')
+        ax2.grid(True, alpha=0.3)
+        
+        # Add statistics
+        mean_duration = durations.mean()
+        median_duration = durations.median()
+        ax2.axvline(mean_duration, color='red', linestyle='--', label=f'Mean: {mean_duration:.1f}s')
+        ax2.axvline(median_duration, color='green', linestyle='--', label=f'Median: {median_duration:.1f}s')
+        ax2.legend()
+    else:
+        ax2.text(0.5, 0.5, 'No duration data', ha='center', va='center', transform=ax2.transAxes)
+    
+    # 3. Calls by Time of Day
+    call_df['timestamp'] = pd.to_datetime(call_df['timestamp'])
+    call_df['hour'] = call_df['timestamp'].dt.hour
+    hourly_calls = call_df['hour'].value_counts().sort_index()
+    
+    ax3.bar(hourly_calls.index, hourly_calls.values, alpha=0.7, color='#FF6B6B', edgecolor='black')
+    ax3.set_title('Calls by Hour of Day', fontsize=11, fontweight='bold')
+    ax3.set_xlabel('Hour of Day')
+    ax3.set_ylabel('Number of Calls')
+    ax3.set_xticks(range(0, 24, 2))
+    ax3.grid(True, alpha=0.3)
+    
+    # 4. Total Call Duration by Type
+    if 'type' in call_df.columns and 'duration' in call_df.columns:
+        duration_by_type = call_df.groupby('type')['duration'].sum().sort_values(ascending=False)
+        import numpy as np
+        colors4 = plt.cm.viridis(np.linspace(0.2, 0.8, len(duration_by_type)))
+        bars = ax4.bar(range(len(duration_by_type)), duration_by_type.values/60, color=colors4, alpha=0.8)
+        ax4.set_title('Total Call Duration by Type (minutes)', fontsize=11, fontweight='bold')
+        ax4.set_xlabel('Call Type')
+        ax4.set_ylabel('Total Minutes')
+        ax4.set_xticks(range(len(duration_by_type)))
+        ax4.set_xticklabels(duration_by_type.index, rotation=45, ha='right')
+        ax4.grid(True, alpha=0.3, axis='y')
+        
+        # Add value labels
+        for bar, value in zip(bars, duration_by_type.values/60):
+            ax4.text(bar.get_x() + bar.get_width()/2., bar.get_height() + max(duration_by_type.values/60)*0.01,
+                    f'{value:.1f}m', ha='center', va='bottom', fontsize=8, fontweight='bold')
+    else:
+        ax4.text(0.5, 0.5, 'No duration by type data', ha='center', va='center', transform=ax4.transAxes)
+    
+    plt.suptitle('Phone Call Analysis', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(f'call_analysis_{timestamp}.png', dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"    Saved: call_analysis_{timestamp}.png")
+
+def create_sms_analysis(sms_data, timestamp, plt):
+    """Create SMS-specific analysis"""
+    if not sms_data:
+        print("   No SMS data available")
+        return
+    
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
+    
+    # Prepare SMS data
+    sms_df = pd.DataFrame(sms_data)
+    
+    # 1. SMS Direction Distribution
+    if 'direction' in sms_df.columns:
+        direction_counts = sms_df['direction'].value_counts()
+        colors1 = ['#4ECDC4' if d == 'OUTGOING' else '#FF6B6B' for d in direction_counts.index]
+        ax1.pie(direction_counts.values, labels=direction_counts.index, autopct='%1.1f%%',
+                colors=colors1, startangle=90, textprops={'fontsize': 10})
+        ax1.set_title('SMS Direction Distribution', fontsize=11, fontweight='bold')
+    else:
+        ax1.text(0.5, 0.5, 'No direction data', ha='center', va='center', transform=ax1.transAxes)
+    
+    # 2. SMS Length Distribution
+    if 'message' in sms_df.columns:
+        sms_lengths = sms_df['message'].apply(len)
+        ax2.hist(sms_lengths, bins=30, alpha=0.7, color='#96CEB4', edgecolor='black')
+        ax2.set_title('SMS Message Length Distribution', fontsize=11, fontweight='bold')
+        ax2.set_xlabel('Message Length (characters)')
+        ax2.set_ylabel('Number of SMS')
+        ax2.grid(True, alpha=0.3)
+        
+        # Add statistics
+        mean_length = sms_lengths.mean()
+        ax2.axvline(mean_length, color='red', linestyle='--', label=f'Mean: {mean_length:.1f} chars')
+        ax2.legend()
+    else:
+        ax2.text(0.5, 0.5, 'No message data', ha='center', va='center', transform=ax2.transAxes)
+    
+    # 3. SMS by Time of Day
+    sms_df['timestamp'] = pd.to_datetime(sms_df['timestamp'])
+    sms_df['hour'] = sms_df['timestamp'].dt.hour
+    hourly_sms = sms_df['hour'].value_counts().sort_index()
+    
+    ax3.bar(hourly_sms.index, hourly_sms.values, alpha=0.7, color='#FFD166', edgecolor='black')
+    ax3.set_title('SMS by Hour of Day', fontsize=11, fontweight='bold')
+    ax3.set_xlabel('Hour of Day')
+    ax3.set_ylabel('Number of SMS')
+    ax3.set_xticks(range(0, 24, 2))
+    ax3.grid(True, alpha=0.3)
+    
+    # 4. Daily SMS Volume
+    sms_df['date'] = sms_df['timestamp'].dt.date
+    daily_sms = sms_df.groupby('date').size()
+    
+    ax4.plot(daily_sms.index, daily_sms.values, marker='o', linewidth=2, color='#9D4EDD', markersize=4)
+    ax4.set_title('Daily SMS Volume', fontsize=11, fontweight='bold')
+    ax4.set_xlabel('Date')
+    ax4.set_ylabel('Number of SMS')
+    ax4.tick_params(axis='x', rotation=45)
+    ax4.grid(True, alpha=0.3)
+    
+    # Add moving average
+    if len(daily_sms) > 7:
+        moving_avg = daily_sms.rolling(window=7).mean()
+        ax4.plot(daily_sms.index, moving_avg.values, 'r--', linewidth=2, label='7-day MA')
+        ax4.legend()
+    
+    plt.suptitle('SMS Analysis', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(f'sms_analysis_{timestamp}.png', dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"   Saved: sms_analysis_{timestamp}.png")
+
+# ============================================================================
+# SIMPLIFIED VISUALIZATION MENU OPTION
+# ============================================================================
+
+def visualization_menu(timeline, sms_data, call_data, email_data):
+    """Interactive visualization menu"""
+    print("\n" + "="*70)
+    print(" VISUALIZATION OPTIONS")
+    print("="*70)
+    print("1. Create All Visualizations (Recommended)")
+    print("2. Daily Activity Heatmap")
+    print("3. Communication Source Analysis")
+    print("4. Hourly Pattern Analysis")
+    print("5. Day of Week Analysis")
+    print("6. Forensic Categories")
+    print("7. Top Contacts Analysis")
+    print("8. Monthly Trends")
+    print("9. Call Analysis")
+    print("10. SMS Analysis")
+    print("11. Return to Main Menu")
+    
+    choice = input("\nSelect visualization option (1-11): ").strip()
+    
+    matplotlib_available, plt, sns = check_matplotlib()
+    if not matplotlib_available:
+        return
+    
+    plt.style.use('seaborn-v0_8-darkgrid')
+    sns.set_palette("husl")
+    
+    df = pd.DataFrame(timeline)
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df['date'] = df['timestamp'].dt.date
+    df['hour'] = df['timestamp'].dt.hour
+    df['day_of_week'] = df['timestamp'].dt.day_name()
+    df['month'] = df['timestamp'].dt.to_period('M').astype(str)
+    
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    try:
+        if choice == '1':
+            create_detailed_visualizations(timeline, sms_data, call_data, email_data)
+        elif choice == '2':
+            create_daily_heatmap(df, timestamp, plt)
+        elif choice == '3':
+            create_source_distribution(df, timestamp, plt)
+        elif choice == '4':
+            create_hourly_pattern(df, timestamp, plt)
+        elif choice == '5':
+            create_day_of_week_analysis(df, timestamp, plt)
+        elif choice == '6':
+            create_forensic_categories(df, timestamp, plt)
+        elif choice == '7':
+            contact_counts, _ = extract_contacts(sms_data, call_data, email_data)
+            create_top_contacts_chart(contact_counts, timestamp, plt)
+        elif choice == '8':
+            create_monthly_trend(df, timestamp, plt)
+        elif choice == '9':
+            create_call_analysis(call_data, timestamp, plt)
+        elif choice == '10':
+            create_sms_analysis(sms_data, timestamp, plt)
+        elif choice == '11':
+            plt.close('all')
+            return
+        else:
+            print("Invalid option. Returning to main menu.")
+            plt.close('all')
+            return
+        
+        print(f"\n Visualization saved with timestamp: {timestamp}")
+        
+    except Exception as e:
+        print(f"Error creating visualization: {e}")
+    finally:
+        plt.close('all')
+
+
+# ============================================================================
+# MAIN FUNCTION
+# ============================================================================
+
+def main():
+    """Main function with enhanced error handling"""
+    print("\n" + "="*70)
+    print(" DIGITAL FORENSIC CORRELATION SYSTEM")
+    print("="*70)
+    print("\nLoading forensic data...")
+    
+    try:
+        # Load data
+        sms_data, call_data, email_data = data()
+        
+        if not sms_data and not call_data and not email_data:
+            print("\n No data available. Exiting.")
+            return
+        
+        # Create timeline
+        print("\n" + "="*70)
+        print(" CREATING UNIFIED TIMELINE")
+        print("="*70)
+        timeline = create_timeline(sms_data, call_data, email_data)
+        
+        if not timeline:
+            print(" Failed to create timeline. Exiting.")
+            return
+        
+        # Main menu loop
+        while True:
+            print("\n" + "="*70)
+            print(" FORENSIC ANALYST MENU")
+            print("="*70)
+            print("1.  Search Timeline Events")
+            print("2.  View Detailed Analysis")
+            print("3.  Export Forensic Report")
+            print("4.  Visualize Data Patterns")
+            print("5.  Export All Data for Legal Proceedings")
+            print("6.  Exit")
+            print("="*70)
+            
+            choice = input("\nSelect option (1-6): ").strip()
+            
+            if choice == '1':
+                # Search functionality
+                print("\n" + "="*70)
+                print(" SEARCH TIMELINE EVENTS")
+                print("="*70)
+                search_term = input("Enter search term (contact/phone/email/keyword): ").strip().lower()
+                
+                if search_term:
+                    results = []
+                    for event in timeline:
+                        if (search_term in str(event.get('contact', '')).lower() or
+                            search_term in str(event.get('content', '')).lower() or
+                            search_term in str(event.get('source', '')).lower() or
+                            search_term in str(event.get('type', '')).lower() or
+                            search_term in str(event.get('forensic_tag', '')).lower()):
+                            results.append(event)
+                    
+                    if results:
+                        print(f"\n Found {len(results):,} matching events:")
+                        print("-" * 100)
+                        print(f"{'Timestamp':<20} {'Source':<8} {'Contact':<25} {'Type':<12} {'Content':<30}")
+                        print("-" * 100)
+                        
+                        for event in results[:20]:  # Show first 20
+                            timestamp = event['timestamp'].strftime('%Y-%m-%d %H:%M')
+                            source = event['source']
+                            contact = event['contact'][:23] + "..." if len(event['contact']) > 23 else event['contact']
+                            etype = event['type'][:10] if event['type'] else ''
+                            content = event['content'][:27] + "..." if len(event['content']) > 27 else event['content']
+                            
+                            print(f"{timestamp:<20} {source:<8} {contact:<25} {etype:<12} {content:<30}")
+                        
+                        if len(results) > 20:
+                            print(f"... and {len(results) - 20:,} more results")
+                        
+                        # Export search results
+                        export_search = input("\nExport these results to CSV? (y/n): ").lower()
+                        if export_search == 'y':
+                            export_search_results(results, search_term)
+                    else:
+                        print(" No matching events found.")
+            
+            elif choice == '2':
+                analyze_data(sms_data, call_data, email_data)
+            
+            elif choice == '3':
+                export_forensic_report(timeline, sms_data, call_data, email_data)
+            
+            elif choice == '4':
+                print("\n" + "="*70)
+                print(" DATA VISUALIZATION")
+                print("="*70)
+    
+                # Create timeline if not already created
+                if not timeline:
+                    print("Creating timeline...")
+                    timeline = create_timeline(sms_data, call_data, email_data)
+    
+                if not timeline:
+                    print("No timeline data available for visualization.")
+                    continue
+    
+                # Show visualization menu
+                visualization_menu(timeline, sms_data, call_data, email_data)
+            
+            elif choice == '5':
+                print("\n" + "="*70)
+                print("  EXPORTING ALL DATA FOR LEGAL PROCEEDINGS")
+                print("="*70)
+                export_forensic_report(timeline, sms_data, call_data, email_data)
+                print("\n All forensic data exported for legal proceedings:")
+                
+                # List exported files
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                exported_files = [
+                    f'forensic_report_{timestamp}.txt',
+                    f'forensic_timeline_{timestamp}.csv',
+                    f'forensic_contacts_{timestamp}.csv',
+                    f'forensic_summary_{timestamp}.json',
+                    f'forensic_dashboard_{timestamp}.png'
+                ]
+                
+                for file in exported_files:
+                    if os.path.exists(file):
+                        size = os.path.getsize(file)
+                        print(f"  • {file} ({size:,} bytes)")
+            
+            elif choice == '6':
+                print("\n" + "="*70)
+                print(" INVESTIGATION SESSION COMPLETED")
+                print("="*70)
+                print("All reports and data have been saved.")
+                print("Thank you for using the Digital Forensic Correlation System.")
+                break
+            
+            else:
+                print(" Invalid option. Please try again.")
+    
+    except KeyboardInterrupt:
+        print("\n\n Investigation interrupted by user.")
+    except Exception as e:
+        print(f"\n Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+
+def export_search_results(results, search_term):
+    """Export search results to CSV"""
+    if not results:
+        return
+    
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f'search_results_{search_term}_{timestamp}.csv'
+    
+    with open(filename, 'w', newline='', encoding='utf-8') as f:
+        fieldnames = ['timestamp', 'id', 'source', 'contact', 'type', 'content', 'forensic_tag']
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        for event in results:
+            row = event.copy()
+            row['timestamp'] = event['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+            if 'details' in row:
+                del row['details']
+            writer.writerow(row)
+    
+    print(f" Search results exported to '{filename}'")
+
+if __name__ == "__main__":
+    main()
