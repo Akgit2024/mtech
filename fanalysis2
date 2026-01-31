@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-DIGITAL FORENSIC CORRELATION SYSTEM
-Enhanced for real forensic data import
-"""
 
 import pandas as pd
 import numpy as np
@@ -1902,7 +1898,7 @@ def main():
         # Main menu loop
         while True:
             print("\n" + "="*70)
-            print(" FORENSIC ANALYST MENU")
+            print(" ANALYST MENU")
             print("="*70)
             print("1.  Search Timeline Events")
             print("2.  View Detailed Analysis")
