@@ -11,6 +11,15 @@ from collections import Counter, defaultdict
 import warnings
 warnings.filterwarnings('ignore')
 
+try:
+    from IPython.display import display, clear_output
+    from IPython import get_ipython
+    IN_JUPYTER = get_ipython() is not None
+    if IN_JUPYTER:
+        get_ipython().run_line_magic('matplotlib', 'inline')
+except:
+    IN_JUPYTER = False
+
 # ============================================================================
 # DATA LOADING FUNCTIONS - ENHANCED WITH DEBUGGING
 # ============================================================================
@@ -604,7 +613,7 @@ def parse_timestamp(timestamp_str):
 def data():
     """Main data loading function with comprehensive reporting"""
     print("\n" + "="*70)
-    print(" LOADING FORENSIC DATA FILES")
+    print(" LOADING DATA FILES")
     print("="*70)
     
     # Check what files exist
@@ -1236,7 +1245,7 @@ def export_summary_json(timeline, sms_data, call_data, email_data, contact_count
     print(f" Summary data saved to '{filename}'")
 
 # ============================================================================
-# ENHANCED VISUALIZATION FUNCTIONS - SEPARATE CLEAR CHARTS
+# ENHANCED VISUALIZATION FUNCTIONS - DISPLAY IN JUPYTER AND SAVE TO FILES
 # ============================================================================
 
 def check_matplotlib():
@@ -1250,11 +1259,124 @@ def check_matplotlib():
         print(" Matplotlib/Seaborn not installed. Install with: pip install matplotlib seaborn")
         return False, None, None
 
-def create_detailed_visualizations(timeline, sms_data, call_data, email_data):
-    """Create separate, clear visualizations for forensic analysis"""
+def display_and_save_plot(fig, filename, plt, display_in_jupyter=True):
+    """Display plot in Jupyter and save to file"""
+    # Save to file
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    print(f"    Saved: {filename}")
+    
+    # Display in Jupyter if running in notebook
+    if display_in_jupyter and IN_JUPYTER:
+        plt.show()
+    else:
+        plt.close(fig)
+
+def generate_anomaly_summary(timeline, sms_data, call_data, email_data):
+    """Generate detailed anomaly summary"""
+    summary = []
+    total_events = len(timeline)
+    
+    if total_events == 0:
+        return summary
+    
+    # 1. Suspicious Patterns
+    flags = detect_suspicious_patterns(timeline)
+    if flags:
+        summary.append(f" DETECTED ANOMALIES: {len(flags)} issues found")
+        for i, flag in enumerate(flags[:5], 1):
+            summary.append(f"   {i}. {flag}")
+        if len(flags) > 5:
+            summary.append(f"   ... and {len(flags)-5} more anomalies")
+    
+    # 2. Temporal Anomalies
+    hourly_counts = {hour: 0 for hour in range(24)}
+    for event in timeline:
+        hourly_counts[event['timestamp'].hour] += 1
+    
+    # Check for unusual hour patterns
+    night_events = sum(hourly_counts[h] for h in [0, 1, 2, 3, 4, 5])
+    night_percentage = (night_events / total_events) * 100
+    if night_percentage > 20:
+        summary.append(f"🌙 HIGH NIGHT ACTIVITY: {night_percentage:.1f}% of events occur between 12AM-6AM")
+    
+    # 3. Contact Anomalies
+    contact_counts, _ = extract_contacts(sms_data, call_data, email_data)
+    if contact_counts:
+        top_contact, top_count = contact_counts.most_common(1)[0]
+        if top_count > total_events * 0.3:  # One contact has >30% of interactions
+            summary.append(f" DOMINANT CONTACT: '{top_contact[:20]}...' has {top_count} interactions ({top_count/total_events*100:.1f}% of total)")
+    
+    # 4. Forensic Category Anomalies
+    if 'forensic_tag' in pd.DataFrame(timeline).columns:
+        categories = Counter(event['forensic_tag'] for event in timeline)
+        suspicious_categories = ['SUSPICIOUS', 'FINANCIAL', 'URGENT', 'INTERNATIONAL']
+        for cat in suspicious_categories:
+            if cat in categories:
+                count = categories[cat]
+                percentage = (count / total_events) * 100
+                if percentage > 5:
+                    summary.append(f"🔍 {cat} ACTIVITY: {count} events ({percentage:.1f}%)")
+    
+    # 5. Source Concentration
+    sources = Counter(event['source'] for event in timeline)
+    if len(sources) > 0:
+        main_source, main_count = sources.most_common(1)[0]
+        main_percentage = (main_count / total_events) * 100
+        if main_percentage > 70:
+            summary.append(f"📱 SOURCE CONCENTRATION: {main_source} accounts for {main_percentage:.1f}% of all events")
+    
+    # 6. Time Gap Anomalies
+    timeline_sorted = sorted(timeline, key=lambda x: x['timestamp'])
+    gaps = []
+    for i in range(1, len(timeline_sorted)):
+        gap = (timeline_sorted[i]['timestamp'] - timeline_sorted[i-1]['timestamp']).total_seconds() / 3600  # hours
+        gaps.append(gap)
+    
+    if gaps:
+        avg_gap = np.mean(gaps)
+        max_gap = max(gaps)
+        if max_gap > 48:  # More than 2 days
+            summary.append(f"⏰ UNUSUAL GAPS: Maximum gap between events is {max_gap:.1f} hours")
+    
+    # 7. Event Frequency Changes
+    if len(timeline) > 10:
+        df = pd.DataFrame(timeline)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df['date'] = df['timestamp'].dt.date
+        daily_counts = df.groupby('date').size()
+        
+        if len(daily_counts) > 7:
+            rolling_avg = daily_counts.rolling(window=7).mean()
+            recent_avg = rolling_avg.iloc[-1] if not rolling_avg.empty else 0
+            overall_avg = daily_counts.mean()
+            
+            if recent_avg > overall_avg * 1.5:
+                summary.append(f"📈 RECENT SURGE: Recent activity is {recent_avg/overall_avg:.1f}x higher than average")
+            elif recent_avg < overall_avg * 0.5:
+                summary.append(f"📉 RECENT DROP: Recent activity is {recent_avg/overall_avg:.1f}x lower than average")
+    
+    return summary
+
+def export_anomaly_summary(anomaly_summary, timestamp):
+    """Export anomaly summary to file"""
+    filename = f'anomaly_summary_{timestamp}.txt'
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.write("=" * 60 + "\n")
+        f.write("ANOMALY DETECTION SUMMARY\n")
+        f.write("=" * 60 + "\n\n")
+        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Total Anomalies Found: {len(anomaly_summary)}\n\n")
+        
+        for item in anomaly_summary:
+            f.write(item + "\n")
+    
+    print(f"    Anomaly summary saved to '{filename}'")
+
+def create_visualizations_with_display(timeline, sms_data, call_data, email_data):
+    """Create visualizations that display in Jupyter and save to files"""
     
     print("\n" + "="*70)
-    print(" CREATING DETAILED FORENSIC VISUALIZATIONS")
+    print(" CREATING DETAILED VISUALIZATIONS")
     print("="*70)
     
     if not timeline:
@@ -1282,58 +1404,81 @@ def create_detailed_visualizations(timeline, sms_data, call_data, email_data):
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
     try:
+        # Create anomaly summary first
+        anomaly_summary = generate_anomaly_summary(timeline, sms_data, call_data, email_data)
+        if anomaly_summary:
+            print("\n" + "="*70)
+            print(" ANOMALY DETECTION SUMMARY")
+            print("="*70)
+            for item in anomaly_summary:
+                print(f"• {item}")
+        
         # 1. TIMELINE HEATMAP (Daily Activity Pattern)
         print("\n1. Creating Daily Activity Heatmap...")
-        create_daily_heatmap(df, timestamp, plt)
+        create_daily_heatmap_with_display(df, timestamp, plt)
         
         # 2. COMMUNICATION SOURCE DISTRIBUTION
         print("2. Creating Communication Source Chart...")
-        create_source_distribution(df, timestamp, plt)
+        create_source_distribution_with_display(df, timestamp, plt)
         
         # 3. HOURLY ACTIVITY PATTERN
         print("3. Creating Hourly Activity Pattern...")
-        create_hourly_pattern(df, timestamp, plt)
+        create_hourly_pattern_with_display(df, timestamp, plt)
         
         # 4. DAY OF WEEK ANALYSIS
         print("4. Creating Day of Week Analysis...")
-        create_day_of_week_analysis(df, timestamp, plt)
+        create_day_of_week_analysis_with_display(df, timestamp, plt)
         
         # 5. FORENSIC CATEGORY BREAKDOWN
         print("5. Creating Forensic Category Breakdown...")
-        create_forensic_categories(df, timestamp, plt)
+        create_forensic_categories_with_display(df, timestamp, plt)
         
         # 6. TOP CONTACTS VISUALIZATION
         print("6. Creating Top Contacts Visualization...")
         contact_counts, contact_details = extract_contacts(sms_data, call_data, email_data)
-        create_top_contacts_chart(contact_counts, timestamp, plt)
+        create_top_contacts_chart_with_display(contact_counts, timestamp, plt)
         
         # 7. MONTHLY TREND ANALYSIS
         print("7. Creating Monthly Trend Analysis...")
-        create_monthly_trend(df, timestamp, plt)
+        create_monthly_trend_with_display(df, timestamp, plt)
         
         # 8. CALL DURATION ANALYSIS (if call data exists)
         if call_data:
             print("8. Creating Call Duration Analysis...")
-            create_call_analysis(call_data, timestamp, plt)
+            create_call_analysis_with_display(call_data, timestamp, plt)
         
         # 9. SMS DIRECTION ANALYSIS
         if sms_data:
             print("9. Creating SMS Analysis...")
-            create_sms_analysis(sms_data, timestamp, plt)
+            create_sms_analysis_with_display(sms_data, timestamp, plt)
         
-        print(f"\n All visualizations have been saved as separate PNG files")
+        # 10. ANOMALY VISUALIZATION (if anomalies found)
+        if anomaly_summary and len(anomaly_summary) > 0:
+            print("10. Creating Anomaly Visualization...")
+            create_anomaly_visualization(timeline, timestamp, plt)
+        
+        print(f"\n✓ All visualizations have been saved as separate PNG files")
         print(f"  Files are named with timestamp: {timestamp}")
+        
+        # Export anomaly summary to file
+        if anomaly_summary:
+            export_anomaly_summary(anomaly_summary, timestamp)
         
     except Exception as e:
         print(f" Visualization error: {e}")
         import traceback
         traceback.print_exc()
     finally:
-        # Close all figures to free memory
-        plt.close('all')
+        # Don't close figures if in Jupyter
+        if not IN_JUPYTER:
+            plt.close('all')
 
-def create_daily_heatmap(df, timestamp, plt):
-    """Create daily activity heatmap"""
+# ============================================================================
+# INDIVIDUAL VISUALIZATION FUNCTIONS (WITH DISPLAY SUPPORT)
+# ============================================================================
+
+def create_daily_heatmap_with_display(df, timestamp, plt):
+    """Create daily activity heatmap with display"""
     fig, ax = plt.subplots(figsize=(14, 8))
     
     # Create pivot table for heatmap
@@ -1355,7 +1500,6 @@ def create_daily_heatmap(df, timestamp, plt):
     
     # Set ticks
     if len(daily_data) > 30:
-        # Show only every 5th date for readability
         xticks = range(0, len(daily_data), max(1, len(daily_data)//30))
         ax.set_xticks(xticks)
         ax.set_xticklabels([daily_data.index[i] for i in xticks], rotation=45, ha='right')
@@ -1372,12 +1516,10 @@ def create_daily_heatmap(df, timestamp, plt):
     
     ax.set_title('Daily Communication Activity Heatmap', fontsize=14, fontweight='bold', pad=20)
     plt.tight_layout()
-    plt.savefig(f'daily_heatmap_{timestamp}.png', dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"    Saved: daily_heatmap_{timestamp}.png")
+    display_and_save_plot(fig, f'daily_heatmap_{timestamp}.png', plt)
 
-def create_source_distribution(df, timestamp, plt):
-    """Create communication source distribution chart"""
+def create_source_distribution_with_display(df, timestamp, plt):
+    """Create communication source distribution chart with display"""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
     
     # Pie chart
@@ -1411,12 +1553,10 @@ def create_source_distribution(df, timestamp, plt):
     
     plt.suptitle('Communication Sources Analysis', fontsize=14, fontweight='bold')
     plt.tight_layout()
-    plt.savefig(f'source_distribution_{timestamp}.png', dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"    Saved: source_distribution_{timestamp}.png")
+    display_and_save_plot(fig, f'source_distribution_{timestamp}.png', plt)
 
-def create_hourly_pattern(df, timestamp, plt):
-    """Create hourly activity pattern chart"""
+def create_hourly_pattern_with_display(df, timestamp, plt):
+    """Create hourly activity pattern chart with display"""
     fig, ax = plt.subplots(figsize=(12, 6))
     
     hourly_counts = df['hour'].value_counts().sort_index()
@@ -1448,12 +1588,10 @@ def create_hourly_pattern(df, timestamp, plt):
                    f'{int(height):,}', ha='center', va='bottom', fontsize=9, fontweight='bold')
     
     plt.tight_layout()
-    plt.savefig(f'hourly_pattern_{timestamp}.png', dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"    Saved: hourly_pattern_{timestamp}.png")
+    display_and_save_plot(fig, f'hourly_pattern_{timestamp}.png', plt)
 
-def create_day_of_week_analysis(df, timestamp, plt):
-    """Create day of week analysis chart"""
+def create_day_of_week_analysis_with_display(df, timestamp, plt):
+    """Create day of week analysis chart with display"""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
     
     # Define order
@@ -1491,12 +1629,10 @@ def create_day_of_week_analysis(df, timestamp, plt):
     
     plt.suptitle('Weekly Activity Pattern Analysis', fontsize=14, fontweight='bold')
     plt.tight_layout()
-    plt.savefig(f'day_of_week_{timestamp}.png', dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"    Saved: day_of_week_{timestamp}.png")
+    display_and_save_plot(fig, f'day_of_week_{timestamp}.png', plt)
 
-def create_forensic_categories(df, timestamp, plt):
-    """Create forensic category breakdown chart"""
+def create_forensic_categories_with_display(df, timestamp, plt):
+    """Create forensic category breakdown chart with display"""
     if 'forensic_tag' not in df.columns:
         print("   No forensic tags available")
         return
@@ -1534,12 +1670,10 @@ def create_forensic_categories(df, timestamp, plt):
                 transform=ax.transAxes, fontsize=9, va='center')
     
     plt.tight_layout()
-    plt.savefig(f'forensic_categories_{timestamp}.png', dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"    Saved: forensic_categories_{timestamp}.png")
+    display_and_save_plot(fig, f'forensic_categories_{timestamp}.png', plt)
 
-def create_top_contacts_chart(contact_counts, timestamp, plt):
-    """Create top contacts visualization"""
+def create_top_contacts_chart_with_display(contact_counts, timestamp, plt):
+    """Create top contacts visualization with display"""
     if not contact_counts:
         print("   No contact data available")
         return
@@ -1587,12 +1721,10 @@ def create_top_contacts_chart(contact_counts, timestamp, plt):
     
     plt.suptitle('Contact Network Analysis', fontsize=14, fontweight='bold')
     plt.tight_layout()
-    plt.savefig(f'top_contacts_{timestamp}.png', dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"    Saved: top_contacts_{timestamp}.png")
+    display_and_save_plot(fig, f'top_contacts_{timestamp}.png', plt)
 
-def create_monthly_trend(df, timestamp, plt):
-    """Create monthly trend analysis"""
+def create_monthly_trend_with_display(df, timestamp, plt):
+    """Create monthly trend analysis with display"""
     fig, ax = plt.subplots(figsize=(12, 6))
     
     monthly_counts = df.groupby('month').size()
@@ -1635,12 +1767,10 @@ def create_monthly_trend(df, timestamp, plt):
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
     plt.tight_layout()
-    plt.savefig(f'monthly_trend_{timestamp}.png', dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"    Saved: monthly_trend_{timestamp}.png")
+    display_and_save_plot(fig, f'monthly_trend_{timestamp}.png', plt)
 
-def create_call_analysis(call_data, timestamp, plt):
-    """Create call-specific analysis"""
+def create_call_analysis_with_display(call_data, timestamp, plt):
+    """Create call-specific analysis with display"""
     if not call_data:
         print("   No call data available")
         return
@@ -1713,12 +1843,10 @@ def create_call_analysis(call_data, timestamp, plt):
     
     plt.suptitle('Phone Call Analysis', fontsize=14, fontweight='bold')
     plt.tight_layout()
-    plt.savefig(f'call_analysis_{timestamp}.png', dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"    Saved: call_analysis_{timestamp}.png")
+    display_and_save_plot(fig, f'call_analysis_{timestamp}.png', plt)
 
-def create_sms_analysis(sms_data, timestamp, plt):
-    """Create SMS-specific analysis"""
+def create_sms_analysis_with_display(sms_data, timestamp, plt):
+    """Create SMS-specific analysis with display"""
     if not sms_data:
         print("   No SMS data available")
         return
@@ -1785,40 +1913,77 @@ def create_sms_analysis(sms_data, timestamp, plt):
     
     plt.suptitle('SMS Analysis', fontsize=14, fontweight='bold')
     plt.tight_layout()
-    plt.savefig(f'sms_analysis_{timestamp}.png', dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"   Saved: sms_analysis_{timestamp}.png")
+    display_and_save_plot(fig, f'sms_analysis_{timestamp}.png', plt)
 
+def create_anomaly_visualization(timeline, timestamp, plt):
+    """Create visualization of detected anomalies"""
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Extract dates and counts
+    df = pd.DataFrame(timeline)
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df['date'] = df['timestamp'].dt.date
+    
+    # Get daily counts
+    daily_counts = df.groupby('date').size()
+    
+    # Plot daily activity
+    ax.plot(daily_counts.index, daily_counts.values, 'b-', linewidth=2, label='Daily Events', alpha=0.7)
+    
+    # Add 7-day moving average
+    if len(daily_counts) > 7:
+        moving_avg = daily_counts.rolling(window=7).mean()
+        ax.plot(daily_counts.index, moving_avg.values, 'r--', linewidth=2, label='7-day Moving Average')
+    
+    # Highlight anomalies
+    flags = detect_suspicious_patterns(timeline)
+    if flags:
+        # Mark peak days
+        peak_days = daily_counts.nlargest(3)
+        for day, count in peak_days.items():
+            ax.plot(day, count, 'ro', markersize=10, label='Peak Day' if day == peak_days.index[0] else "")
+            ax.annotate(f'Peak: {count}', xy=(day, count), xytext=(10, 10),
+                       textcoords='offset points', fontweight='bold')
+    
+    ax.set_title('Anomaly Detection: Daily Activity Pattern', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Date', fontsize=12)
+    ax.set_ylabel('Number of Events', fontsize=12)
+    ax.tick_params(axis='x', rotation=45)
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    
+    # Add anomaly statistics
+    if len(daily_counts) > 0:
+        mean_events = daily_counts.mean()
+        std_events = daily_counts.std()
+        threshold = mean_events + 2 * std_events
+        
+        anomaly_days = daily_counts[daily_counts > threshold]
+        if not anomaly_days.empty:
+            ax.axhline(y=threshold, color='orange', linestyle=':', linewidth=2, 
+                      label=f'Anomaly Threshold ({threshold:.1f})')
+            for day in anomaly_days.index:
+                ax.axvline(x=day, color='yellow', alpha=0.3, linestyle='--')
+    
+    plt.tight_layout()
+    display_and_save_plot(fig, f'anomaly_detection_{timestamp}.png', plt)
 # ============================================================================
 # SIMPLIFIED VISUALIZATION MENU OPTION
 # ============================================================================
 
 def visualization_menu(timeline, sms_data, call_data, email_data):
-    """Interactive visualization menu"""
-    print("\n" + "="*70)
-    print(" VISUALIZATION OPTIONS")
-    print("="*70)
-    print("1. Create All Visualizations (Recommended)")
-    print("2. Daily Activity Heatmap")
-    print("3. Communication Source Analysis")
-    print("4. Hourly Pattern Analysis")
-    print("5. Day of Week Analysis")
-    print("6. Forensic Categories")
-    print("7. Top Contacts Analysis")
-    print("8. Monthly Trends")
-    print("9. Call Analysis")
-    print("10. SMS Analysis")
-    print("11. Return to Main Menu")
+    """Interactive visualization menu with display in Jupyter"""
     
-    choice = input("\nSelect visualization option (1-11): ").strip()
-    
+    # Check for matplotlib first
     matplotlib_available, plt, sns = check_matplotlib()
     if not matplotlib_available:
+        print("Matplotlib/Seaborn not available for visualizations.")
         return
     
     plt.style.use('seaborn-v0_8-darkgrid')
     sns.set_palette("husl")
     
+    # Convert to DataFrame for easier manipulation
     df = pd.DataFrame(timeline)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df['date'] = df['timestamp'].dt.date
@@ -1826,44 +1991,109 @@ def visualization_menu(timeline, sms_data, call_data, email_data):
     df['day_of_week'] = df['timestamp'].dt.day_name()
     df['month'] = df['timestamp'].dt.to_period('M').astype(str)
     
+    # Get contact counts for contacts visualization
+    contact_counts, contact_details = extract_contacts(sms_data, call_data, email_data)
+    
+    # Get timestamp for filenames
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
-    try:
-        if choice == '1':
-            create_detailed_visualizations(timeline, sms_data, call_data, email_data)
-        elif choice == '2':
-            create_daily_heatmap(df, timestamp, plt)
-        elif choice == '3':
-            create_source_distribution(df, timestamp, plt)
-        elif choice == '4':
-            create_hourly_pattern(df, timestamp, plt)
-        elif choice == '5':
-            create_day_of_week_analysis(df, timestamp, plt)
-        elif choice == '6':
-            create_forensic_categories(df, timestamp, plt)
-        elif choice == '7':
-            contact_counts, _ = extract_contacts(sms_data, call_data, email_data)
-            create_top_contacts_chart(contact_counts, timestamp, plt)
-        elif choice == '8':
-            create_monthly_trend(df, timestamp, plt)
-        elif choice == '9':
-            create_call_analysis(call_data, timestamp, plt)
-        elif choice == '10':
-            create_sms_analysis(sms_data, timestamp, plt)
-        elif choice == '11':
-            plt.close('all')
-            return
-        else:
-            print("Invalid option. Returning to main menu.")
-            plt.close('all')
-            return
+    while True:
+        print("\n" + "="*70)
+        print(" VISUALIZATION OPTIONS")
+        print("="*70)
+        print("1.  Create All Visualizations (Recommended)")
+        print("2.  Daily Activity Heatmap")
+        print("3.  Communication Source Analysis")
+        print("4.  Hourly Pattern Analysis")
+        print("5.  Day of Week Analysis")
+        print("6.  Forensic Categories")
+        print("7.  Top Contacts Analysis")
+        print("8.  Monthly Trends")
+        print("9.  Call Analysis")
+        print("10. SMS Analysis")
+        print("11. Anomaly Detection Visualization")
+        print("12. Return to Main Menu")
         
-        print(f"\n Visualization saved with timestamp: {timestamp}")
+        choice = input("\nSelect visualization option (1-12): ").strip()
         
-    except Exception as e:
-        print(f"Error creating visualization: {e}")
-    finally:
-        plt.close('all')
+        try:
+            if choice == '1':
+                # Create all visualizations
+                print("\nCreating all visualizations...")
+                create_visualizations_with_display(timeline, sms_data, call_data, email_data)
+                
+            elif choice == '2':
+                # Daily Activity Heatmap
+                print("\nCreating Daily Activity Heatmap...")
+                create_daily_heatmap_with_display(df, timestamp, plt)
+                
+            elif choice == '3':
+                # Communication Source Analysis
+                print("\nCreating Communication Source Analysis...")
+                create_source_distribution_with_display(df, timestamp, plt)
+                
+            elif choice == '4':
+                # Hourly Pattern Analysis
+                print("\nCreating Hourly Pattern Analysis...")
+                create_hourly_pattern_with_display(df, timestamp, plt)
+                
+            elif choice == '5':
+                # Day of Week Analysis
+                print("\nCreating Day of Week Analysis...")
+                create_day_of_week_analysis_with_display(df, timestamp, plt)
+                
+            elif choice == '6':
+                # Forensic Categories
+                print("\nCreating Forensic Categories Analysis...")
+                create_forensic_categories_with_display(df, timestamp, plt)
+                
+            elif choice == '7':
+                # Top Contacts Analysis
+                print("\nCreating Top Contacts Analysis...")
+                create_top_contacts_chart_with_display(contact_counts, timestamp, plt)
+                
+            elif choice == '8':
+                # Monthly Trends
+                print("\nCreating Monthly Trend Analysis...")
+                create_monthly_trend_with_display(df, timestamp, plt)
+                
+            elif choice == '9':
+                # Call Analysis
+                print("\nCreating Call Analysis...")
+                create_call_analysis_with_display(call_data, timestamp, plt)
+                
+            elif choice == '10':
+                # SMS Analysis
+                print("\nCreating SMS Analysis...")
+                create_sms_analysis_with_display(sms_data, timestamp, plt)
+                
+            elif choice == '11':
+                # Anomaly Detection Visualization
+                print("\nCreating Anomaly Detection Visualization...")
+                create_anomaly_visualization(timeline, timestamp, plt)
+                
+            elif choice == '12':
+                # Return to Main Menu
+                print("\nReturning to Main Menu...")
+                if not IN_JUPYTER:
+                    plt.close('all')
+                return
+                
+            else:
+                print("Invalid option. Please select 1-12.")
+                
+        except Exception as e:
+            print(f"Error creating visualization: {e}")
+            import traceback
+            traceback.print_exc()
+            
+        # Ask if user wants to create another visualization
+        if choice not in ['1', '12']:
+            another = input("\nCreate another visualization? (y/n): ").lower().strip()
+            if another != 'y':
+                if not IN_JUPYTER:
+                    plt.close('all')
+                return
 
 
 # ============================================================================
@@ -1873,7 +2103,7 @@ def visualization_menu(timeline, sms_data, call_data, email_data):
 def main():
     """Main function with enhanced error handling"""
     print("\n" + "="*70)
-    print(" DIGITAL FORENSIC CORRELATION SYSTEM")
+    print(" Multi Source Event Sequence Reconstruction")
     print("="*70)
     print("\nLoading forensic data...")
     
@@ -1898,14 +2128,15 @@ def main():
         # Main menu loop
         while True:
             print("\n" + "="*70)
-            print(" ANALYST MENU")
+            print(" FORENSIC ANALYST MENU")
             print("="*70)
             print("1.  Search Timeline Events")
             print("2.  View Detailed Analysis")
             print("3.  Export Forensic Report")
-            print("4.  Visualize Data Patterns")
+            print("4.  Visualize Data Patterns (Display in Jupyter & Save)")
             print("5.  Export All Data for Legal Proceedings")
-            print("6.  Exit")
+            print("6.  Generate Report")  # NEW OPTION
+            print("7.  Exit")
             print("="*70)
             
             choice = input("\nSelect option (1-6): ").strip()
@@ -1962,17 +2193,17 @@ def main():
                 print("\n" + "="*70)
                 print(" DATA VISUALIZATION")
                 print("="*70)
-    
+                
                 # Create timeline if not already created
                 if not timeline:
                     print("Creating timeline...")
                     timeline = create_timeline(sms_data, call_data, email_data)
-    
+                
                 if not timeline:
                     print("No timeline data available for visualization.")
                     continue
-    
-                # Show visualization menu
+                
+                # Show visualization sub-menu
                 visualization_menu(timeline, sms_data, call_data, email_data)
             
             elif choice == '5':
@@ -2002,7 +2233,6 @@ def main():
                 print(" INVESTIGATION SESSION COMPLETED")
                 print("="*70)
                 print("All reports and data have been saved.")
-                print("Thank you for using the Digital Forensic Correlation System.")
                 break
             
             else:
@@ -2036,6 +2266,63 @@ def export_search_results(results, search_term):
             writer.writerow(row)
     
     print(f" Search results exported to '{filename}'")
+
+# ============================================================================
+# JUPYTER-SPECIFIC HELPER FUNCTIONS
+# ============================================================================
+
+def run_in_jupyter():
+    """Convenience function to run everything in Jupyter Notebook"""
+    print("Running in Jupyter Notebook mode...")
+    
+    # Check for data files
+    sms_data, call_data, email_data = data()
+    
+    if not sms_data and not call_data and not email_data:
+        print("No data found. Please ensure data files are in the current directory.")
+        return None, None, None, None
+    
+    # Create timeline
+    timeline = create_timeline(sms_data, call_data, email_data)
+    
+    if not timeline:
+        print("Failed to create timeline.")
+        return None, None, None, None
+    
+    # Run analysis
+    analyze_data(sms_data, call_data, email_data)
+    
+    # Create visualizations
+    create_visualizations_with_display(timeline, sms_data, call_data, email_data)
+    
+    # Generate anomaly report
+    anomaly_summary = generate_anomaly_summary(timeline, sms_data, call_data, email_data)
+    if anomaly_summary:
+        print("\n" + "="*70)
+        print(" SUMMARY")
+        print("="*70)
+        for item in anomaly_summary:
+            print(item)
+    
+    # Export reports
+    export_forensic_report(timeline, sms_data, call_data, email_data)
+    
+    print("\n Analysis complete! Check your directory for saved files.")
+    return timeline, sms_data, call_data, email_data
+
+# Then update the main guard at the end:
+if __name__ == "__main__":
+    # Check if running in Jupyter
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            print("")
+            # Optional: Uncomment to auto-run when in Jupyter
+            # timeline, sms_data, call_data, email_data = run_in_jupyter()
+        else:
+            main()
+    except:
+        main()
 
 if __name__ == "__main__":
     main()
