@@ -997,7 +997,7 @@ def detect_suspicious_patterns(timeline):
 # ENHANCED FUNCTIONS FOR CLEAR SOURCE/DESTINATION DISPLAY
 # ============================================================================
 
-def get_communication_details(event):
+def get_communication_details(event, user_phone=None, user_email=None):
     """Get clear source and destination details from event"""
     source_type = event.get('source', 'UNKNOWN')
     contact = event.get('contact', 'Unknown')
@@ -1005,25 +1005,41 @@ def get_communication_details(event):
     if source_type == 'SMS':
         direction = event.get('type', '').upper()
         if direction == 'OUTGOING':
-            return 'SELF', contact, 'SMS', direction
+            # Outgoing SMS: User's phone → Contact's phone
+            source = user_phone if user_phone else 'My Phone'
+            return source, contact, 'SMS', direction, event.get('content', '')
         elif direction == 'INCOMING':
-            return contact, 'SELF', 'SMS', direction
+            # Incoming SMS: Contact's phone → User's phone
+            destination = user_phone if user_phone else 'My Phone'
+            return contact, destination, 'SMS', direction, event.get('content', '')
         else:
-            return contact, 'SELF', 'SMS', 'UNKNOWN'
+            return contact, user_phone if user_phone else 'My Phone', 'SMS', 'UNKNOWN', event.get('content', '')
     
     elif source_type == 'CALL':
         call_type = event.get('type', 'UNKNOWN')
-        # For simplicity, assume calls are from contact to self
-        return contact, 'SELF', 'CALL', call_type
+        # For calls, show actual numbers
+        # Assuming calls are from contact to user
+        source = contact
+        destination = user_phone if user_phone else 'My Phone'
+        return source, destination, 'CALL', call_type, f"Duration: {event.get('details', {}).get('duration', 0)}s"
     
     elif source_type == 'EMAIL':
         sender = contact  # In timeline, contact is sender for emails
         recipient = event.get('details', {}).get('recipient', 'Unknown')
-        return sender, recipient, 'EMAIL', 'SENT'
+        subject = event.get('content', '').split('Subject:')[1].strip() if 'Subject:' in event.get('content', '') else 'No Subject'
+        
+        # Identify if email is sent by user
+        if user_email and sender == user_email:
+            # Email sent by user
+            destination = recipient
+            return sender, destination, 'EMAIL', 'SENT', subject
+        else:
+            # Email received by user
+            return sender, user_email if user_email else 'My Email', 'EMAIL', 'RECEIVED', subject
     
-    return contact, 'SELF', source_type, 'UNKNOWN'
+    return contact, user_phone if user_phone else 'My Phone', source_type, 'UNKNOWN', ''
 
-def display_timeline_events(timeline):
+def display_timeline_events(timeline, user_phone=None, user_email=None):
     """Display all timeline events with clear source/destination"""
     print("\n" + "="*120)
     print(" TIMELINE EVENTS - ALL COMMUNICATIONS")
@@ -1034,7 +1050,7 @@ def display_timeline_events(timeline):
         return
     
     total_events = len(timeline)
-    print(f"\n TOTAL COMMUNICATION EVENTS: {total_events:,}")
+    print(f"\n📊 TOTAL COMMUNICATION EVENTS: {total_events:,}")
     
     # Group by communication type
     print("\n" + "="*120)
@@ -1044,22 +1060,33 @@ def display_timeline_events(timeline):
     if sms_events:
         print(f"\nTotal SMS Messages: {len(sms_events):,}")
         print("\n" + "-" * 120)
-        print(f"{'Time':<20} {'Source':<25} {'→':<3} {'Destination':<25} {'Direction':<10} {'Message Preview':<40}")
+        print(f"{'Time':<20} {'From':<25} {'→':<3} {'To':<25} {'Direction':<10} {'Message Preview':<40}")
         print("-" * 120)
         
         for event in sms_events[:50]:  # Show first 50 SMS
             timestamp = event['timestamp'].strftime('%Y-%m-%d %H:%M')
-            source, destination, medium, direction = get_communication_details(event)
+            source, destination, medium, direction, content = get_communication_details(event, user_phone, user_email)
             
             # Truncate long strings
             source_display = source[:23] + "..." if len(source) > 23 else source
             dest_display = destination[:23] + "..." if len(destination) > 23 else destination
-            message_preview = event['content'][:37] + "..." if len(event['content']) > 37 else event['content']
+            message_preview = content[:37] + "..." if len(content) > 37 else content
             
-            print(f"{timestamp:<20} {source_display:<25} {'→':<3} {dest_display:<25} {direction:<10} {message_preview:<40}")
+            # Show actual direction based on phone numbers
+            actual_direction = "SENT" if direction == "OUTGOING" else "RECEIVED"
+            
+            print(f"{timestamp:<20} {source_display:<25} {'→':<3} {dest_display:<25} {actual_direction:<10} {message_preview:<40}")
         
         if len(sms_events) > 50:
             print(f"... and {len(sms_events) - 50:,} more SMS messages")
+        
+        # SMS Statistics
+        incoming_sms = [e for e in sms_events if e.get('type') == 'INCOMING']
+        outgoing_sms = [e for e in sms_events if e.get('type') == 'OUTGOING']
+        print(f"\n📱 SMS STATISTICS:")
+        print(f"   • Received SMS: {len(incoming_sms):,} ({len(incoming_sms)/len(sms_events)*100:.1f}%)")
+        print(f"   • Sent SMS: {len(outgoing_sms):,} ({len(outgoing_sms)/len(sms_events)*100:.1f}%)")
+        
     else:
         print("No SMS messages found.")
     
@@ -1070,25 +1097,41 @@ def display_timeline_events(timeline):
     if call_events:
         print(f"\nTotal Phone Calls: {len(call_events):,}")
         print("\n" + "-" * 120)
-        print(f"{'Time':<20} {'Source':<25} {'→':<3} {'Destination':<25} {'Type':<15} {'Duration':<10} {'Details':<20}")
+        print(f"{'Time':<20} {'Caller':<25} {'→':<3} {'Receiver':<25} {'Call Type':<15} {'Duration':<10} {'Status':<15}")
         print("-" * 120)
         
         for event in call_events[:50]:  # Show first 50 calls
             timestamp = event['timestamp'].strftime('%Y-%m-%d %H:%M')
-            source, destination, medium, call_type = get_communication_details(event)
+            source, destination, medium, call_type, details = get_communication_details(event, user_phone, user_email)
+            
+            # Determine call status based on type
+            call_status = "MISSED" if call_type == "MISSED" else "ANSWERED"
             
             # Get duration
             duration = event.get('details', {}).get('duration', 0)
-            duration_str = f"{duration}s" if duration > 0 else "N/A"
+            duration_str = f"{duration//60}:{duration%60:02d}" if duration > 60 else f"{duration}s"
             
             # Truncate
             source_display = source[:23] + "..." if len(source) > 23 else source
             dest_display = destination[:23] + "..." if len(destination) > 23 else destination
             
-            print(f"{timestamp:<20} {source_display:<25} {'→':<3} {dest_display:<25} {call_type:<15} {duration_str:<10} {event['content'][:20]:<20}")
+            print(f"{timestamp:<20} {source_display:<25} {'→':<3} {dest_display:<25} {call_type:<15} {duration_str:<10} {call_status:<15}")
         
         if len(call_events) > 50:
             print(f"... and {len(call_events) - 50:,} more phone calls")
+        
+        # Call Statistics
+        total_duration = sum(e.get('details', {}).get('duration', 0) for e in call_events)
+        avg_duration = total_duration / len(call_events) if call_events else 0
+        
+        call_types = Counter(e.get('type', 'UNKNOWN') for e in call_events)
+        print(f"\n📞 CALL STATISTICS:")
+        print(f"   • Total call duration: {total_duration//3600}h {(total_duration%3600)//60}m {total_duration%60}s")
+        print(f"   • Average call duration: {avg_duration:.1f} seconds")
+        print(f"   • Call types:")
+        for call_type, count in call_types.most_common():
+            print(f"      - {call_type}: {count:,}")
+        
     else:
         print("No phone calls found.")
     
@@ -1099,21 +1142,14 @@ def display_timeline_events(timeline):
     if email_events:
         print(f"\nTotal Emails: {len(email_events):,}")
         print("\n" + "-" * 120)
-        print(f"{'Time':<20} {'Sender':<25} {'→':<3} {'Recipient':<25} {'Subject':<45}")
+        print(f"{'Time':<20} {'From':<25} {'→':<3} {'To':<25} {'Subject':<45}")
         print("-" * 120)
         
         for event in email_events[:50]:  # Show first 50 emails
             timestamp = event['timestamp'].strftime('%Y-%m-%d %H:%M')
-            source, destination, medium, _ = get_communication_details(event)
+            source, destination, medium, _, subject = get_communication_details(event, user_phone, user_email)
             
-            # Get subject from content
-            content = event['content']
-            if 'Subject:' in content:
-                subject = content.split('Subject:')[1].strip()[:42]
-            else:
-                subject = content[:42]
-            
-            subject_display = subject + "..." if len(subject) > 42 else subject
+            subject_display = (subject[:42] + "...") if len(subject) > 42 else subject
             
             # Truncate
             source_display = source[:23] + "..." if len(source) > 23 else source
@@ -1123,6 +1159,19 @@ def display_timeline_events(timeline):
         
         if len(email_events) > 50:
             print(f"... and {len(email_events) - 50:,} more emails")
+        
+        # Email Statistics
+        unique_senders = set()
+        unique_recipients = set()
+        for event in email_events:
+            source, destination, _, _, _ = get_communication_details(event, user_phone, user_email)
+            unique_senders.add(source)
+            unique_recipients.add(destination)
+        
+        print(f"\n📧 EMAIL STATISTICS:")
+        print(f"   • Unique senders: {len(unique_senders):,}")
+        print(f"   • Unique recipients: {len(unique_recipients):,}")
+        
     else:
         print("No emails found.")
     
@@ -1140,11 +1189,21 @@ def display_timeline_events(timeline):
         earliest = timeline[0]['timestamp']
         latest = timeline[-1]['timestamp']
         days_span = (latest - earliest).days + 1
-        print(f"\n TIME RANGE: {earliest.strftime('%Y-%m-%d')} to {latest.strftime('%Y-%m-%d')}")
+        print(f"\n📅 TIME RANGE: {earliest.strftime('%Y-%m-%d')} to {latest.strftime('%Y-%m-%d')}")
         print(f"   • Duration: {days_span} days")
         print(f"   • Average daily events: {total_events/days_span:.1f}")
+        
+        # Most active day
+        daily_counts = {}
+        for event in timeline:
+            date = event['timestamp'].date()
+            daily_counts[date] = daily_counts.get(date, 0) + 1
+        
+        if daily_counts:
+            busiest_date = max(daily_counts, key=daily_counts.get)
+            print(f"   • Busiest day: {busiest_date} ({daily_counts[busiest_date]:,} events)")
 
-def view_detailed_analysis(timeline, sms_data, call_data, email_data):
+def view_detailed_analysis(timeline, sms_data, call_data, email_data, user_phone=None, user_email=None):
     """Display detailed analysis with source/destination information"""
     print("\n" + "="*120)
     print(" DETAILED COMMUNICATION ANALYSIS")
@@ -1155,7 +1214,7 @@ def view_detailed_analysis(timeline, sms_data, call_data, email_data):
         return
     
     total_events = len(timeline)
-    print(f"\n TOTAL COMMUNICATION EVENTS: {total_events:,}")
+    print(f"\n📊 TOTAL COMMUNICATION EVENTS: {total_events:,}")
     
     # 1. Communication Flow Analysis
     print("\n" + "="*120)
@@ -1166,21 +1225,21 @@ def view_detailed_analysis(timeline, sms_data, call_data, email_data):
     communication_flows = defaultdict(int)
     
     for event in timeline:
-        source, destination, medium, _ = get_communication_details(event)
-        flow_key = f"{source} → {destination} via {medium}"
+        source, destination, medium, direction, _ = get_communication_details(event, user_phone, user_email)
+        flow_key = f"{source} → {destination}"
         communication_flows[flow_key] += 1
     
     # Show top communication flows
     print("\nTOP COMMUNICATION FLOWS:")
     print("-" * 100)
-    print(f"{'Rank':<5} {'Source → Destination':<50} {'Medium':<10} {'Count':<10} {'%':<8}")
+    print(f"{'Rank':<5} {'From → To':<50} {'Count':<10} {'%':<8}")
     print("-" * 100)
     
     sorted_flows = sorted(communication_flows.items(), key=lambda x: x[1], reverse=True)
     for i, (flow, count) in enumerate(sorted_flows[:20], 1):
         percentage = (count / total_events) * 100
         flow_display = flow[:48] + "..." if len(flow) > 48 else flow
-        print(f"{i:<5} {flow_display:<50} {flow.split('via ')[-1]:<10} {count:<10,} {percentage:>7.1f}%")
+        print(f"{i:<5} {flow_display:<50} {count:<10,} {percentage:>7.1f}%")
     
     # 2. Contact Analysis
     print("\n" + "="*120)
@@ -1188,30 +1247,89 @@ def view_detailed_analysis(timeline, sms_data, call_data, email_data):
     print("="*120)
     
     contact_counts, contact_details = extract_contacts(sms_data, call_data, email_data)
-    print(f"\n UNIQUE CONTACTS: {len(contact_counts):,}")
+    print(f"\n👥 UNIQUE CONTACTS: {len(contact_counts):,}")
     
-    # Show who contacts SELF the most
-    contacts_to_self = []
+    # Show incoming communications (to user)
+    incoming_communications = Counter()
+    # Show outgoing communications (from user)
+    outgoing_communications = Counter()
+    
     for event in timeline:
-        source, destination, medium, _ = get_communication_details(event)
-        if destination == 'SELF' and source != 'SELF':
-            contacts_to_self.append(source)
+        source, destination, medium, direction, _ = get_communication_details(event, user_phone, user_email)
+        
+        # Determine if this is incoming or outgoing relative to user
+        user_identifier = user_phone if user_phone else (user_email if user_email else 'My Phone')
+        
+        if destination == user_identifier and source != user_identifier:
+            # Incoming communication to user
+            incoming_communications[source] += 1
+        
+        if source == user_identifier and destination != user_identifier:
+            # Outgoing communication from user
+            outgoing_communications[destination] += 1
     
-    if contacts_to_self:
-        contact_counter = Counter(contacts_to_self)
-        print(f"\nCONTACTS WHO REACHED OUT TO YOU:")
+    if incoming_communications:
+        print(f"\n📥 COMMUNICATIONS RECEIVED BY YOU:")
         print("-" * 80)
-        print(f"{'Rank':<5} {'Contact':<40} {'Count':<10} {'%':<8}")
+        print(f"{'Rank':<5} {'From':<40} {'Count':<10} {'%':<8}")
         print("-" * 80)
         
-        for i, (contact, count) in enumerate(contact_counter.most_common(15), 1):
-            percentage = (count / total_events) * 100
+        total_incoming = sum(incoming_communications.values())
+        for i, (contact, count) in enumerate(incoming_communications.most_common(15), 1):
+            percentage = (count / total_incoming) * 100
             contact_display = contact[:38] + "..." if len(contact) > 38 else contact
             print(f"{i:<5} {contact_display:<40} {count:<10,} {percentage:>7.1f}%")
     
-    # 3. Temporal Analysis
+    if outgoing_communications:
+        print(f"\n📤 COMMUNICATIONS SENT BY YOU:")
+        print("-" * 80)
+        print(f"{'Rank':<5} {'To':<40} {'Count':<10} {'%':<8}")
+        print("-" * 80)
+        
+        total_outgoing = sum(outgoing_communications.values())
+        for i, (contact, count) in enumerate(outgoing_communications.most_common(15), 1):
+            percentage = (count / total_outgoing) * 100
+            contact_display = contact[:38] + "..." if len(contact) > 38 else contact
+            print(f"{i:<5} {contact_display:<40} {count:<10,} {percentage:>7.1f}%")
+    
+    # 3. Communication Pattern Analysis
     print("\n" + "="*120)
-    print(" 3. TEMPORAL ANALYSIS")
+    print(" 3. COMMUNICATION PATTERNS")
+    print("="*120)
+    
+    # Analyze communication patterns by type
+    communication_patterns = defaultdict(lambda: defaultdict(int))
+    
+    for event in timeline:
+        source, destination, medium, direction, _ = get_communication_details(event, user_phone, user_email)
+        pattern_key = f"{source} ↔ {destination}"
+        communication_patterns[pattern_key][medium] += 1
+    
+    print(f"\nTOP COMMUNICATION PATTERNS BY MEDIUM:")
+    print("-" * 100)
+    print(f"{'Rank':<5} {'Parties':<40} {'SMS':<8} {'Calls':<8} {'Emails':<8} {'Total':<10}")
+    print("-" * 100)
+    
+    # Calculate total communications per pattern
+    pattern_totals = []
+    for pattern, mediums in communication_patterns.items():
+        total = sum(mediums.values())
+        pattern_totals.append((pattern, total, mediums))
+    
+    # Sort by total communications
+    pattern_totals.sort(key=lambda x: x[1], reverse=True)
+    
+    for i, (pattern, total, mediums) in enumerate(pattern_totals[:15], 1):
+        pattern_display = pattern[:38] + "..." if len(pattern) > 38 else pattern
+        print(f"{i:<5} {pattern_display:<40} "
+              f"{mediums.get('SMS', 0):<8} "
+              f"{mediums.get('CALL', 0):<8} "
+              f"{mediums.get('EMAIL', 0):<8} "
+              f"{total:<10,}")
+    
+    # 4. Temporal Analysis
+    print("\n" + "="*120)
+    print(" 4. TEMPORAL ANALYSIS")
     print("="*120)
     
     timeline_sorted = sorted(timeline, key=lambda x: x['timestamp'])
@@ -1220,7 +1338,7 @@ def view_detailed_analysis(timeline, sms_data, call_data, email_data):
         latest = timeline_sorted[-1]['timestamp']
         days_span = (latest - earliest).days + 1
         
-        print(f"\n INVESTIGATION PERIOD: {days_span} days")
+        print(f"\n📅 INVESTIGATION PERIOD: {days_span} days")
         print(f"   • From: {earliest.strftime('%Y-%m-%d %H:%M')}")
         print(f"   • To: {latest.strftime('%Y-%m-%d %H:%M')}")
         print(f"   • Average daily communications: {total_events/days_span:.1f}")
@@ -1232,7 +1350,7 @@ def view_detailed_analysis(timeline, sms_data, call_data, email_data):
             hourly_counts[hour] += 1
         
         peak_hour = max(hourly_counts, key=hourly_counts.get)
-        print(f"\n PEAK ACTIVITY HOUR: {peak_hour:02d}:00 ({hourly_counts[peak_hour]:,} events)")
+        print(f"\n⏰ PEAK ACTIVITY HOUR: {peak_hour:02d}:00 ({hourly_counts[peak_hour]:,} events)")
         
         # Communication by time of day
         morning = sum(hourly_counts[h] for h in range(6, 12))
@@ -1240,15 +1358,15 @@ def view_detailed_analysis(timeline, sms_data, call_data, email_data):
         evening = sum(hourly_counts[h] for h in range(18, 24))
         night = sum(hourly_counts[h] for h in range(0, 6))
         
-        print(f"\n COMMUNICATION BY TIME OF DAY:")
+        print(f"\n🌅 COMMUNICATION BY TIME OF DAY:")
         print(f"   • Morning (6AM-12PM): {morning:,} ({morning/total_events*100:.1f}%)")
         print(f"   • Afternoon (12PM-6PM): {afternoon:,} ({afternoon/total_events*100:.1f}%)")
         print(f"   • Evening (6PM-12AM): {evening:,} ({evening/total_events*100:.1f}%)")
         print(f"   • Night (12AM-6AM): {night:,} ({night/total_events*100:.1f}%)")
     
-    # 4. Forensic Category Analysis
+    # 5. Forensic Category Analysis
     print("\n" + "="*120)
-    print(" 4. FORENSIC CATEGORY ANALYSIS")
+    print(" 5. FORENSIC CATEGORY ANALYSIS")
     print("="*120)
     
     categories = Counter(event['forensic_tag'] for event in timeline)
@@ -1275,34 +1393,34 @@ def view_detailed_analysis(timeline, sms_data, call_data, email_data):
         risk = risk_levels.get(category, 'LOW')
         print(f"{category:<20} {count:>10,} {percentage:>7.1f}% {risk:<15}")
     
-    # 5. Recent Activity
+    # 6. Recent Activity
     print("\n" + "="*120)
-    print(" 5. RECENT ACTIVITY (Last 7 Days)")
+    print(" 6. RECENT ACTIVITY (Last 7 Days)")
     print("="*120)
     
     seven_days_ago = datetime.now() - timedelta(days=7)
     recent_events = [e for e in timeline if e['timestamp'] >= seven_days_ago]
     
     if recent_events:
-        print(f"\n RECENT COMMUNICATIONS: {len(recent_events):,} events in last 7 days")
+        print(f"\n🔄 RECENT COMMUNICATIONS: {len(recent_events):,} events in last 7 days")
         print("\n" + "-" * 120)
-        print(f"{'Time':<20} {'Source':<25} {'→':<3} {'Destination':<25} {'Medium':<8} {'Details':<40}")
+        print(f"{'Time':<20} {'From':<25} {'→':<3} {'To':<25} {'Medium':<8} {'Details':<40}")
         print("-" * 120)
         
         for event in sorted(recent_events, key=lambda x: x['timestamp'], reverse=True)[:15]:
             timestamp = event['timestamp'].strftime('%m-%d %H:%M')
-            source, destination, medium, details = get_communication_details(event)
+            source, destination, medium, _, details = get_communication_details(event, user_phone, user_email)
             
             # Truncate
             source_display = source[:23] + "..." if len(source) > 23 else source
             dest_display = destination[:23] + "..." if len(destination) > 23 else destination
-            content_preview = event['content'][:38] + "..." if len(event['content']) > 38 else event['content']
+            content_preview = details[:38] + "..." if len(details) > 38 else details
             
             print(f"{timestamp:<20} {source_display:<25} {'→':<3} {dest_display:<25} {medium:<8} {content_preview:<40}")
     else:
         print("\nNo communications in the last 7 days.")
 
-def suspicious_communications_analysis(timeline):
+def suspicious_communications_analysis(timeline, user_phone=None, user_email=None):
     """Analyze and display suspicious communications"""
     print("\n" + "="*120)
     print(" SUSPICIOUS COMMUNICATIONS ANALYSIS")
@@ -1319,7 +1437,7 @@ def suspicious_communications_analysis(timeline):
     total_events = len(timeline)
     suspicious_count = len(suspicious_events)
     
-    print(f"\n SUSPICIOUS COMMUNICATIONS DETECTED: {suspicious_count:,} of {total_events:,} total events")
+    print(f"\n🔍 SUSPICIOUS COMMUNICATIONS DETECTED: {suspicious_count:,} of {total_events:,} total events")
     print(f"   • Suspicious Rate: {suspicious_count/total_events*100:.1f}%")
     
     if suspicious_events:
@@ -1364,17 +1482,17 @@ def suspicious_communications_analysis(timeline):
         
         print(f"\nShowing {min(20, len(suspicious_events))} of {len(suspicious_events):,} suspicious communications:")
         print("\n" + "-" * 140)
-        print(f"{'No.':<4} {'Time':<18} {'Source':<25} {'→':<3} {'Destination':<25} {'Medium':<8} {'Category':<15} {'Content Preview':<40}")
+        print(f"{'No.':<4} {'Time':<18} {'From':<25} {'→':<3} {'To':<25} {'Medium':<8} {'Category':<15} {'Content Preview':<40}")
         print("-" * 140)
         
         for i, event in enumerate(suspicious_events[:20], 1):
             timestamp = event['timestamp'].strftime('%m-%d %H:%M')
-            source, destination, medium, _ = get_communication_details(event)
+            source, destination, medium, _, content = get_communication_details(event, user_phone, user_email)
             
             # Truncate
             source_display = source[:23] + "..." if len(source) > 23 else source
             dest_display = destination[:23] + "..." if len(destination) > 23 else destination
-            content_preview = event['content'][:38] + "..." if len(event['content']) > 38 else event['content']
+            content_preview = content[:38] + "..." if len(content) > 38 else content
             
             print(f"{i:<4} {timestamp:<18} {source_display:<25} {'→':<3} {dest_display:<25} {medium:<8} {event['forensic_tag']:<15} {content_preview:<40}")
         
@@ -1423,7 +1541,7 @@ def suspicious_communications_analysis(timeline):
         # Additional suspicious patterns
         flags = detect_suspicious_patterns(timeline)
         if flags:
-            print(f"\n ADDITIONAL RED FLAGS DETECTED ({len(flags)}):")
+            print(f"\n🚨 ADDITIONAL RED FLAGS DETECTED ({len(flags)}):")
             for flag in flags[:5]:
                 print(f"   • {flag}")
             if len(flags) > 5:
@@ -1436,10 +1554,13 @@ def suspicious_communications_analysis(timeline):
         
         suspicious_contacts = Counter()
         for event in suspicious_events:
-            source, destination, _, _ = get_communication_details(event)
-            if source != 'SELF':
+            source, destination, _, _, _ = get_communication_details(event, user_phone, user_email)
+            
+            # Don't count user's own phone/email
+            user_identifier = user_phone if user_phone else (user_email if user_email else 'My Phone')
+            if source != user_identifier:
                 suspicious_contacts[source] += 1
-            if destination != 'SELF':
+            if destination != user_identifier:
                 suspicious_contacts[destination] += 1
         
         if suspicious_contacts:
@@ -1452,7 +1573,7 @@ def suspicious_communications_analysis(timeline):
                 contact_display = contact[:38] + "..." if len(contact) > 38 else contact
                 print(f"{i:<5} {contact_display:<40} {count:<20,}")
     else:
-        print("\n No suspicious communications detected.")
+        print("\n✅ No suspicious communications detected.")
         print("   • Risk Level: 🟢 LOW")
         print("   • Recommendation: Normal monitoring sufficient")
 
@@ -1856,6 +1977,18 @@ def main():
             print("\n No data available. Exiting.")
             return
         
+        # Ask for user's phone and email for better display
+        print("\n" + "-"*70)
+        print(" USER IDENTIFICATION")
+        print("-"*70)
+        user_phone = input("Enter your phone number (optional, press Enter to skip): ").strip()
+        if not user_phone:
+            user_phone = None
+        
+        user_email = input("Enter your email address (optional, press Enter to skip): ").strip()
+        if not user_email:
+            user_email = None
+        
         # Create timeline
         print("\n" + "="*70)
         print(" CREATING UNIFIED TIMELINE")
@@ -1872,7 +2005,7 @@ def main():
         
         # Show contact summary
         contact_counts, _ = extract_contacts(sms_data, call_data, email_data)
-        print(f" UNIQUE CONTACTS IDENTIFIED: {len(contact_counts):,}")
+        print(f"👥 UNIQUE CONTACTS IDENTIFIED: {len(contact_counts):,}")
         
         # Main menu loop
         while True:
@@ -1890,16 +2023,16 @@ def main():
             choice = input("\nSelect option (1-6): ").strip()
             
             if choice == '1':
-                display_timeline_events(timeline)
+                display_timeline_events(timeline, user_phone, user_email)
             
             elif choice == '2':
-                view_detailed_analysis(timeline, sms_data, call_data, email_data)
+                view_detailed_analysis(timeline, sms_data, call_data, email_data, user_phone, user_email)
             
             elif choice == '3':
                 create_simple_visualizations(timeline, sms_data, call_data, email_data)
             
             elif choice == '4':
-                suspicious_communications_analysis(timeline)
+                suspicious_communications_analysis(timeline, user_phone, user_email)
             
             elif choice == '5':
                 export_forensic_report(timeline, sms_data, call_data, email_data)
@@ -1920,7 +2053,6 @@ def main():
         print(f"\n Unexpected error: {e}")
         import traceback
         traceback.print_exc()
-
 # ============================================================================
 # JUPYTER-SPECIFIC HELPER FUNCTIONS
 # ============================================================================
