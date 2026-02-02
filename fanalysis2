@@ -21,7 +21,7 @@ except:
     IN_JUPYTER = False
 
 # ============================================================================
-# DATA LOADING FUNCTIONS - ENHANCED WITH DEBUGGING
+# DATA LOADING FUNCTIONS 
 # ============================================================================
 
 def load_sms_data():
@@ -991,7 +991,470 @@ def detect_suspicious_patterns(timeline):
     if weekend_percentage > 40:  # More than 40% on weekends
         flags.append(f"High weekend activity: {weekend_percentage:.1f}%")
     
-    return flags[:10]  # Return top 10 flags
+    return flags[:10]  
+
+# ============================================================================
+# ENHANCED FUNCTIONS FOR CLEAR SOURCE/DESTINATION DISPLAY
+# ============================================================================
+
+def get_communication_details(event):
+    """Get clear source and destination details from event"""
+    source_type = event.get('source', 'UNKNOWN')
+    contact = event.get('contact', 'Unknown')
+    
+    if source_type == 'SMS':
+        direction = event.get('type', '').upper()
+        if direction == 'OUTGOING':
+            return 'SELF', contact, 'SMS', direction
+        elif direction == 'INCOMING':
+            return contact, 'SELF', 'SMS', direction
+        else:
+            return contact, 'SELF', 'SMS', 'UNKNOWN'
+    
+    elif source_type == 'CALL':
+        call_type = event.get('type', 'UNKNOWN')
+        # For simplicity, assume calls are from contact to self
+        return contact, 'SELF', 'CALL', call_type
+    
+    elif source_type == 'EMAIL':
+        sender = contact  # In timeline, contact is sender for emails
+        recipient = event.get('details', {}).get('recipient', 'Unknown')
+        return sender, recipient, 'EMAIL', 'SENT'
+    
+    return contact, 'SELF', source_type, 'UNKNOWN'
+
+def display_timeline_events(timeline):
+    """Display all timeline events with clear source/destination"""
+    print("\n" + "="*120)
+    print(" TIMELINE EVENTS - ALL COMMUNICATIONS")
+    print("="*120)
+    
+    if not timeline:
+        print("No timeline events available.")
+        return
+    
+    total_events = len(timeline)
+    print(f"\n TOTAL COMMUNICATION EVENTS: {total_events:,}")
+    
+    # Group by communication type
+    print("\n" + "="*120)
+    print(" 1. SMS MESSAGES")
+    print("="*120)
+    sms_events = [e for e in timeline if e['source'] == 'SMS']
+    if sms_events:
+        print(f"\nTotal SMS Messages: {len(sms_events):,}")
+        print("\n" + "-" * 120)
+        print(f"{'Time':<20} {'Source':<25} {'→':<3} {'Destination':<25} {'Direction':<10} {'Message Preview':<40}")
+        print("-" * 120)
+        
+        for event in sms_events[:50]:  # Show first 50 SMS
+            timestamp = event['timestamp'].strftime('%Y-%m-%d %H:%M')
+            source, destination, medium, direction = get_communication_details(event)
+            
+            # Truncate long strings
+            source_display = source[:23] + "..." if len(source) > 23 else source
+            dest_display = destination[:23] + "..." if len(destination) > 23 else destination
+            message_preview = event['content'][:37] + "..." if len(event['content']) > 37 else event['content']
+            
+            print(f"{timestamp:<20} {source_display:<25} {'→':<3} {dest_display:<25} {direction:<10} {message_preview:<40}")
+        
+        if len(sms_events) > 50:
+            print(f"... and {len(sms_events) - 50:,} more SMS messages")
+    else:
+        print("No SMS messages found.")
+    
+    print("\n" + "="*120)
+    print(" 2. PHONE CALLS")
+    print("="*120)
+    call_events = [e for e in timeline if e['source'] == 'CALL']
+    if call_events:
+        print(f"\nTotal Phone Calls: {len(call_events):,}")
+        print("\n" + "-" * 120)
+        print(f"{'Time':<20} {'Source':<25} {'→':<3} {'Destination':<25} {'Type':<15} {'Duration':<10} {'Details':<20}")
+        print("-" * 120)
+        
+        for event in call_events[:50]:  # Show first 50 calls
+            timestamp = event['timestamp'].strftime('%Y-%m-%d %H:%M')
+            source, destination, medium, call_type = get_communication_details(event)
+            
+            # Get duration
+            duration = event.get('details', {}).get('duration', 0)
+            duration_str = f"{duration}s" if duration > 0 else "N/A"
+            
+            # Truncate
+            source_display = source[:23] + "..." if len(source) > 23 else source
+            dest_display = destination[:23] + "..." if len(destination) > 23 else destination
+            
+            print(f"{timestamp:<20} {source_display:<25} {'→':<3} {dest_display:<25} {call_type:<15} {duration_str:<10} {event['content'][:20]:<20}")
+        
+        if len(call_events) > 50:
+            print(f"... and {len(call_events) - 50:,} more phone calls")
+    else:
+        print("No phone calls found.")
+    
+    print("\n" + "="*120)
+    print(" 3. EMAILS")
+    print("="*120)
+    email_events = [e for e in timeline if e['source'] == 'EMAIL']
+    if email_events:
+        print(f"\nTotal Emails: {len(email_events):,}")
+        print("\n" + "-" * 120)
+        print(f"{'Time':<20} {'Sender':<25} {'→':<3} {'Recipient':<25} {'Subject':<45}")
+        print("-" * 120)
+        
+        for event in email_events[:50]:  # Show first 50 emails
+            timestamp = event['timestamp'].strftime('%Y-%m-%d %H:%M')
+            source, destination, medium, _ = get_communication_details(event)
+            
+            # Get subject from content
+            content = event['content']
+            if 'Subject:' in content:
+                subject = content.split('Subject:')[1].strip()[:42]
+            else:
+                subject = content[:42]
+            
+            subject_display = subject + "..." if len(subject) > 42 else subject
+            
+            # Truncate
+            source_display = source[:23] + "..." if len(source) > 23 else source
+            dest_display = destination[:23] + "..." if len(destination) > 23 else destination
+            
+            print(f"{timestamp:<20} {source_display:<25} {'→':<3} {dest_display:<25} {subject_display:<45}")
+        
+        if len(email_events) > 50:
+            print(f"... and {len(email_events) - 50:,} more emails")
+    else:
+        print("No emails found.")
+    
+    # Summary statistics
+    print("\n" + "="*120)
+    print(" COMMUNICATION SUMMARY")
+    print("="*120)
+    print(f"\n📈 TOTAL EVENTS: {total_events:,}")
+    print(f"   • SMS Messages: {len(sms_events):,} ({len(sms_events)/total_events*100:.1f}%)")
+    print(f"   • Phone Calls: {len(call_events):,} ({len(call_events)/total_events*100:.1f}%)")
+    print(f"   • Emails: {len(email_events):,} ({len(email_events)/total_events*100:.1f}%)")
+    
+    # Time range
+    if timeline:
+        earliest = timeline[0]['timestamp']
+        latest = timeline[-1]['timestamp']
+        days_span = (latest - earliest).days + 1
+        print(f"\n TIME RANGE: {earliest.strftime('%Y-%m-%d')} to {latest.strftime('%Y-%m-%d')}")
+        print(f"   • Duration: {days_span} days")
+        print(f"   • Average daily events: {total_events/days_span:.1f}")
+
+def view_detailed_analysis(timeline, sms_data, call_data, email_data):
+    """Display detailed analysis with source/destination information"""
+    print("\n" + "="*120)
+    print(" DETAILED COMMUNICATION ANALYSIS")
+    print("="*120)
+    
+    if not timeline:
+        print("No timeline data available.")
+        return
+    
+    total_events = len(timeline)
+    print(f"\n TOTAL COMMUNICATION EVENTS: {total_events:,}")
+    
+    # 1. Communication Flow Analysis
+    print("\n" + "="*120)
+    print(" 1. COMMUNICATION FLOW ANALYSIS")
+    print("="*120)
+    
+    # Count communications by type with source/destination
+    communication_flows = defaultdict(int)
+    
+    for event in timeline:
+        source, destination, medium, _ = get_communication_details(event)
+        flow_key = f"{source} → {destination} via {medium}"
+        communication_flows[flow_key] += 1
+    
+    # Show top communication flows
+    print("\nTOP COMMUNICATION FLOWS:")
+    print("-" * 100)
+    print(f"{'Rank':<5} {'Source → Destination':<50} {'Medium':<10} {'Count':<10} {'%':<8}")
+    print("-" * 100)
+    
+    sorted_flows = sorted(communication_flows.items(), key=lambda x: x[1], reverse=True)
+    for i, (flow, count) in enumerate(sorted_flows[:20], 1):
+        percentage = (count / total_events) * 100
+        flow_display = flow[:48] + "..." if len(flow) > 48 else flow
+        print(f"{i:<5} {flow_display:<50} {flow.split('via ')[-1]:<10} {count:<10,} {percentage:>7.1f}%")
+    
+    # 2. Contact Analysis
+    print("\n" + "="*120)
+    print(" 2. CONTACT ANALYSIS")
+    print("="*120)
+    
+    contact_counts, contact_details = extract_contacts(sms_data, call_data, email_data)
+    print(f"\n UNIQUE CONTACTS: {len(contact_counts):,}")
+    
+    # Show who contacts SELF the most
+    contacts_to_self = []
+    for event in timeline:
+        source, destination, medium, _ = get_communication_details(event)
+        if destination == 'SELF' and source != 'SELF':
+            contacts_to_self.append(source)
+    
+    if contacts_to_self:
+        contact_counter = Counter(contacts_to_self)
+        print(f"\nCONTACTS WHO REACHED OUT TO YOU:")
+        print("-" * 80)
+        print(f"{'Rank':<5} {'Contact':<40} {'Count':<10} {'%':<8}")
+        print("-" * 80)
+        
+        for i, (contact, count) in enumerate(contact_counter.most_common(15), 1):
+            percentage = (count / total_events) * 100
+            contact_display = contact[:38] + "..." if len(contact) > 38 else contact
+            print(f"{i:<5} {contact_display:<40} {count:<10,} {percentage:>7.1f}%")
+    
+    # 3. Temporal Analysis
+    print("\n" + "="*120)
+    print(" 3. TEMPORAL ANALYSIS")
+    print("="*120)
+    
+    timeline_sorted = sorted(timeline, key=lambda x: x['timestamp'])
+    if timeline_sorted:
+        earliest = timeline_sorted[0]['timestamp']
+        latest = timeline_sorted[-1]['timestamp']
+        days_span = (latest - earliest).days + 1
+        
+        print(f"\n INVESTIGATION PERIOD: {days_span} days")
+        print(f"   • From: {earliest.strftime('%Y-%m-%d %H:%M')}")
+        print(f"   • To: {latest.strftime('%Y-%m-%d %H:%M')}")
+        print(f"   • Average daily communications: {total_events/days_span:.1f}")
+        
+        # Busiest hours
+        hourly_counts = {hour: 0 for hour in range(24)}
+        for event in timeline:
+            hour = event['timestamp'].hour
+            hourly_counts[hour] += 1
+        
+        peak_hour = max(hourly_counts, key=hourly_counts.get)
+        print(f"\n PEAK ACTIVITY HOUR: {peak_hour:02d}:00 ({hourly_counts[peak_hour]:,} events)")
+        
+        # Communication by time of day
+        morning = sum(hourly_counts[h] for h in range(6, 12))
+        afternoon = sum(hourly_counts[h] for h in range(12, 18))
+        evening = sum(hourly_counts[h] for h in range(18, 24))
+        night = sum(hourly_counts[h] for h in range(0, 6))
+        
+        print(f"\n COMMUNICATION BY TIME OF DAY:")
+        print(f"   • Morning (6AM-12PM): {morning:,} ({morning/total_events*100:.1f}%)")
+        print(f"   • Afternoon (12PM-6PM): {afternoon:,} ({afternoon/total_events*100:.1f}%)")
+        print(f"   • Evening (6PM-12AM): {evening:,} ({evening/total_events*100:.1f}%)")
+        print(f"   • Night (12AM-6AM): {night:,} ({night/total_events*100:.1f}%)")
+    
+    # 4. Forensic Category Analysis
+    print("\n" + "="*120)
+    print(" 4. FORENSIC CATEGORY ANALYSIS")
+    print("="*120)
+    
+    categories = Counter(event['forensic_tag'] for event in timeline)
+    
+    print(f"\n{'Category':<20} {'Count':>10} {'%':>8} {'Risk Level':<15}")
+    print("-" * 55)
+    
+    risk_levels = {
+        'SUSPICIOUS': 'HIGH',
+        'FINANCIAL': 'MEDIUM-HIGH',
+        'URGENT': 'MEDIUM',
+        'INTERNATIONAL': 'MEDIUM',
+        'EXTENDED_COMM': 'LOW-MEDIUM',
+        'COORDINATION': 'LOW-MEDIUM',
+        'BUSINESS': 'LOW',
+        'PERSONAL': 'LOW',
+        'SPAM': 'LOW',
+        'ROUTINE': 'LOW',
+        'CHURN_RISK': 'MEDIUM'
+    }
+    
+    for category, count in categories.most_common():
+        percentage = (count / total_events) * 100
+        risk = risk_levels.get(category, 'LOW')
+        print(f"{category:<20} {count:>10,} {percentage:>7.1f}% {risk:<15}")
+    
+    # 5. Recent Activity
+    print("\n" + "="*120)
+    print(" 5. RECENT ACTIVITY (Last 7 Days)")
+    print("="*120)
+    
+    seven_days_ago = datetime.now() - timedelta(days=7)
+    recent_events = [e for e in timeline if e['timestamp'] >= seven_days_ago]
+    
+    if recent_events:
+        print(f"\n RECENT COMMUNICATIONS: {len(recent_events):,} events in last 7 days")
+        print("\n" + "-" * 120)
+        print(f"{'Time':<20} {'Source':<25} {'→':<3} {'Destination':<25} {'Medium':<8} {'Details':<40}")
+        print("-" * 120)
+        
+        for event in sorted(recent_events, key=lambda x: x['timestamp'], reverse=True)[:15]:
+            timestamp = event['timestamp'].strftime('%m-%d %H:%M')
+            source, destination, medium, details = get_communication_details(event)
+            
+            # Truncate
+            source_display = source[:23] + "..." if len(source) > 23 else source
+            dest_display = destination[:23] + "..." if len(destination) > 23 else destination
+            content_preview = event['content'][:38] + "..." if len(event['content']) > 38 else event['content']
+            
+            print(f"{timestamp:<20} {source_display:<25} {'→':<3} {dest_display:<25} {medium:<8} {content_preview:<40}")
+    else:
+        print("\nNo communications in the last 7 days.")
+
+def suspicious_communications_analysis(timeline):
+    """Analyze and display suspicious communications"""
+    print("\n" + "="*120)
+    print(" SUSPICIOUS COMMUNICATIONS ANALYSIS")
+    print("="*120)
+    
+    if not timeline:
+        print("No timeline data available.")
+        return
+    
+    # Get suspicious events based on forensic tags
+    suspicious_tags = ['SUSPICIOUS', 'FINANCIAL', 'URGENT', 'INTERNATIONAL', 'EXTENDED_COMM']
+    suspicious_events = [e for e in timeline if e['forensic_tag'] in suspicious_tags]
+    
+    total_events = len(timeline)
+    suspicious_count = len(suspicious_events)
+    
+    print(f"\n SUSPICIOUS COMMUNICATIONS DETECTED: {suspicious_count:,} of {total_events:,} total events")
+    print(f"   • Suspicious Rate: {suspicious_count/total_events*100:.1f}%")
+    
+    if suspicious_events:
+        # Group by suspicious category
+        print("\n" + "="*120)
+        print(" SUSPICIOUS COMMUNICATIONS BY CATEGORY")
+        print("="*120)
+        
+        category_counts = Counter(event['forensic_tag'] for event in suspicious_events)
+        
+        print(f"\n{'Category':<20} {'Count':>10} {'% of Suspicious':>15} {'Risk Level':<15} {'Description':<40}")
+        print("-" * 100)
+        
+        category_descriptions = {
+            'SUSPICIOUS': 'Secretive/covert communication patterns',
+            'FINANCIAL': 'Financial transactions or money-related',
+            'URGENT': 'Urgent/emergency communications',
+            'INTERNATIONAL': 'International communications',
+            'EXTENDED_COMM': 'Extended/long-duration communications',
+            'COORDINATION': 'Meeting/coordination discussions'
+        }
+        
+        risk_levels = {
+            'SUSPICIOUS': 'HIGH',
+            'FINANCIAL': 'HIGH',
+            'URGENT': 'MEDIUM-HIGH',
+            'INTERNATIONAL': 'MEDIUM',
+            'EXTENDED_COMM': 'LOW-MEDIUM',
+            'COORDINATION': 'LOW-MEDIUM'
+        }
+        
+        for category, count in category_counts.most_common():
+            percentage = (count / suspicious_count) * 100
+            risk = risk_levels.get(category, 'LOW')
+            description = category_descriptions.get(category, 'Unknown category')
+            print(f"{category:<20} {count:>10,} {percentage:>14.1f}% {risk:<15} {description:<40}")
+        
+        # Show detailed suspicious communications
+        print("\n" + "="*120)
+        print(" DETAILED SUSPICIOUS COMMUNICATIONS")
+        print("="*120)
+        
+        print(f"\nShowing {min(20, len(suspicious_events))} of {len(suspicious_events):,} suspicious communications:")
+        print("\n" + "-" * 140)
+        print(f"{'No.':<4} {'Time':<18} {'Source':<25} {'→':<3} {'Destination':<25} {'Medium':<8} {'Category':<15} {'Content Preview':<40}")
+        print("-" * 140)
+        
+        for i, event in enumerate(suspicious_events[:20], 1):
+            timestamp = event['timestamp'].strftime('%m-%d %H:%M')
+            source, destination, medium, _ = get_communication_details(event)
+            
+            # Truncate
+            source_display = source[:23] + "..." if len(source) > 23 else source
+            dest_display = destination[:23] + "..." if len(destination) > 23 else destination
+            content_preview = event['content'][:38] + "..." if len(event['content']) > 38 else event['content']
+            
+            print(f"{i:<4} {timestamp:<18} {source_display:<25} {'→':<3} {dest_display:<25} {medium:<8} {event['forensic_tag']:<15} {content_preview:<40}")
+        
+        if len(suspicious_events) > 20:
+            print(f"\n... and {len(suspicious_events) - 20:,} more suspicious communications")
+        
+        # Risk Assessment
+        print("\n" + "="*120)
+        print(" RISK ASSESSMENT")
+        print("="*120)
+        
+        # Calculate risk score
+        risk_weights = {
+            'SUSPICIOUS': 10,
+            'FINANCIAL': 9,
+            'URGENT': 7,
+            'INTERNATIONAL': 6,
+            'EXTENDED_COMM': 4,
+            'COORDINATION': 3
+        }
+        
+        total_risk_score = 0
+        max_possible = sum(risk_weights.get(cat, 5) * count for cat, count in category_counts.items())
+        
+        for category, count in category_counts.items():
+            weight = risk_weights.get(category, 5)
+            total_risk_score += count * weight
+        
+        normalized_score = min((total_risk_score / max_possible) * 100, 100) if max_possible > 0 else 0
+        
+        print(f"\n📊 OVERALL RISK SCORE: {normalized_score:.1f}/100")
+        
+        if normalized_score < 20:
+            print("   • Risk Level: 🟢 LOW - Minimal suspicious activity")
+            print("   • Recommendation: Normal monitoring recommended")
+        elif normalized_score < 50:
+            print("   • Risk Level: 🟡 MODERATE - Some concerning patterns")
+            print("   • Recommendation: Increased monitoring advised")
+        elif normalized_score < 75:
+            print("   • Risk Level: 🟠 HIGH - Significant suspicious activity")
+            print("   • Recommendation: Immediate investigation recommended")
+        else:
+            print("   • Risk Level: 🔴 CRITICAL - Extensive suspicious activity")
+            print("   • Recommendation: Urgent investigation required")
+        
+        # Additional suspicious patterns
+        flags = detect_suspicious_patterns(timeline)
+        if flags:
+            print(f"\n ADDITIONAL RED FLAGS DETECTED ({len(flags)}):")
+            for flag in flags[:5]:
+                print(f"   • {flag}")
+            if len(flags) > 5:
+                print(f"   • ... and {len(flags) - 5} more red flags")
+        
+        # Top suspicious contacts
+        print("\n" + "="*120)
+        print(" TOP SUSPICIOUS CONTACTS")
+        print("="*120)
+        
+        suspicious_contacts = Counter()
+        for event in suspicious_events:
+            source, destination, _, _ = get_communication_details(event)
+            if source != 'SELF':
+                suspicious_contacts[source] += 1
+            if destination != 'SELF':
+                suspicious_contacts[destination] += 1
+        
+        if suspicious_contacts:
+            print(f"\nContacts involved in suspicious communications:")
+            print("-" * 80)
+            print(f"{'Rank':<5} {'Contact':<40} {'Suspicious Count':<20}")
+            print("-" * 80)
+            
+            for i, (contact, count) in enumerate(suspicious_contacts.most_common(10), 1):
+                contact_display = contact[:38] + "..." if len(contact) > 38 else contact
+                print(f"{i:<5} {contact_display:<40} {count:<20,}")
+    else:
+        print("\n No suspicious communications detected.")
+        print("   • Risk Level: 🟢 LOW")
+        print("   • Recommendation: Normal monitoring sufficient")
 
 # ============================================================================
 # EXPORT FUNCTIONS
@@ -1000,7 +1463,7 @@ def detect_suspicious_patterns(timeline):
 def export_forensic_report(timeline, sms_data, call_data, email_data):
     """Export comprehensive forensic report"""
     print("\n" + "="*70)
-    print(" EXPORTING FORENSIC REPORT")
+    print(" EXPORTING THE REPORT")
     print("="*70)
     
     if not timeline:
@@ -1245,7 +1708,7 @@ def export_summary_json(timeline, sms_data, call_data, email_data, contact_count
     print(f" Summary data saved to '{filename}'")
 
 # ============================================================================
-# ENHANCED VISUALIZATION FUNCTIONS - DISPLAY IN JUPYTER AND SAVE TO FILES
+# SIMPLIFIED VISUALIZATION FUNCTIONS
 # ============================================================================
 
 def check_matplotlib():
@@ -1259,124 +1722,10 @@ def check_matplotlib():
         print(" Matplotlib/Seaborn not installed. Install with: pip install matplotlib seaborn")
         return False, None, None
 
-def display_and_save_plot(fig, filename, plt, display_in_jupyter=True):
-    """Display plot in Jupyter and save to file"""
-    # Save to file
-    plt.savefig(filename, dpi=300, bbox_inches='tight')
-    print(f"    Saved: {filename}")
-    
-    # Display in Jupyter if running in notebook
-    if display_in_jupyter and IN_JUPYTER:
-        plt.show()
-    else:
-        plt.close(fig)
-
-def generate_anomaly_summary(timeline, sms_data, call_data, email_data):
-    """Generate detailed anomaly summary"""
-    summary = []
-    total_events = len(timeline)
-    
-    if total_events == 0:
-        return summary
-    
-    # 1. Suspicious Patterns
-    flags = detect_suspicious_patterns(timeline)
-    if flags:
-        summary.append(f" DETECTED ANOMALIES: {len(flags)} issues found")
-        for i, flag in enumerate(flags[:5], 1):
-            summary.append(f"   {i}. {flag}")
-        if len(flags) > 5:
-            summary.append(f"   ... and {len(flags)-5} more anomalies")
-    
-    # 2. Temporal Anomalies
-    hourly_counts = {hour: 0 for hour in range(24)}
-    for event in timeline:
-        hourly_counts[event['timestamp'].hour] += 1
-    
-    # Check for unusual hour patterns
-    night_events = sum(hourly_counts[h] for h in [0, 1, 2, 3, 4, 5])
-    night_percentage = (night_events / total_events) * 100
-    if night_percentage > 20:
-        summary.append(f"🌙 HIGH NIGHT ACTIVITY: {night_percentage:.1f}% of events occur between 12AM-6AM")
-    
-    # 3. Contact Anomalies
-    contact_counts, _ = extract_contacts(sms_data, call_data, email_data)
-    if contact_counts:
-        top_contact, top_count = contact_counts.most_common(1)[0]
-        if top_count > total_events * 0.3:  # One contact has >30% of interactions
-            summary.append(f" DOMINANT CONTACT: '{top_contact[:20]}...' has {top_count} interactions ({top_count/total_events*100:.1f}% of total)")
-    
-    # 4. Forensic Category Anomalies
-    if 'forensic_tag' in pd.DataFrame(timeline).columns:
-        categories = Counter(event['forensic_tag'] for event in timeline)
-        suspicious_categories = ['SUSPICIOUS', 'FINANCIAL', 'URGENT', 'INTERNATIONAL']
-        for cat in suspicious_categories:
-            if cat in categories:
-                count = categories[cat]
-                percentage = (count / total_events) * 100
-                if percentage > 5:
-                    summary.append(f"🔍 {cat} ACTIVITY: {count} events ({percentage:.1f}%)")
-    
-    # 5. Source Concentration
-    sources = Counter(event['source'] for event in timeline)
-    if len(sources) > 0:
-        main_source, main_count = sources.most_common(1)[0]
-        main_percentage = (main_count / total_events) * 100
-        if main_percentage > 70:
-            summary.append(f"📱 SOURCE CONCENTRATION: {main_source} accounts for {main_percentage:.1f}% of all events")
-    
-    # 6. Time Gap Anomalies
-    timeline_sorted = sorted(timeline, key=lambda x: x['timestamp'])
-    gaps = []
-    for i in range(1, len(timeline_sorted)):
-        gap = (timeline_sorted[i]['timestamp'] - timeline_sorted[i-1]['timestamp']).total_seconds() / 3600  # hours
-        gaps.append(gap)
-    
-    if gaps:
-        avg_gap = np.mean(gaps)
-        max_gap = max(gaps)
-        if max_gap > 48:  # More than 2 days
-            summary.append(f"⏰ UNUSUAL GAPS: Maximum gap between events is {max_gap:.1f} hours")
-    
-    # 7. Event Frequency Changes
-    if len(timeline) > 10:
-        df = pd.DataFrame(timeline)
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        df['date'] = df['timestamp'].dt.date
-        daily_counts = df.groupby('date').size()
-        
-        if len(daily_counts) > 7:
-            rolling_avg = daily_counts.rolling(window=7).mean()
-            recent_avg = rolling_avg.iloc[-1] if not rolling_avg.empty else 0
-            overall_avg = daily_counts.mean()
-            
-            if recent_avg > overall_avg * 1.5:
-                summary.append(f"📈 RECENT SURGE: Recent activity is {recent_avg/overall_avg:.1f}x higher than average")
-            elif recent_avg < overall_avg * 0.5:
-                summary.append(f"📉 RECENT DROP: Recent activity is {recent_avg/overall_avg:.1f}x lower than average")
-    
-    return summary
-
-def export_anomaly_summary(anomaly_summary, timestamp):
-    """Export anomaly summary to file"""
-    filename = f'anomaly_summary_{timestamp}.txt'
-    with open(filename, 'w', encoding='utf-8') as f:
-        f.write("=" * 60 + "\n")
-        f.write("ANOMALY DETECTION SUMMARY\n")
-        f.write("=" * 60 + "\n\n")
-        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"Total Anomalies Found: {len(anomaly_summary)}\n\n")
-        
-        for item in anomaly_summary:
-            f.write(item + "\n")
-    
-    print(f"    Anomaly summary saved to '{filename}'")
-
-def create_visualizations_with_display(timeline, sms_data, call_data, email_data):
-    """Create visualizations that display in Jupyter and save to files"""
-    
+def create_simple_visualizations(timeline, sms_data, call_data, email_data):
+    """Create simple visualizations"""
     print("\n" + "="*70)
-    print(" CREATING DETAILED VISUALIZATIONS")
+    print(" CREATING VISUALIZATIONS")
     print("="*70)
     
     if not timeline:
@@ -1388,9 +1737,7 @@ def create_visualizations_with_display(timeline, sms_data, call_data, email_data
     if not matplotlib_available:
         return
     
-    # Set style for better looking plots
     plt.style.use('seaborn-v0_8-darkgrid')
-    sns.set_palette("husl")
     
     # Convert to DataFrame for easier manipulation
     df = pd.DataFrame(timeline)
@@ -1398,714 +1745,108 @@ def create_visualizations_with_display(timeline, sms_data, call_data, email_data
     df['date'] = df['timestamp'].dt.date
     df['hour'] = df['timestamp'].dt.hour
     df['day_of_week'] = df['timestamp'].dt.day_name()
-    df['month'] = df['timestamp'].dt.to_period('M').astype(str)
     
     # Get current timestamp for filenames
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
     try:
-        # Create anomaly summary first
-        anomaly_summary = generate_anomaly_summary(timeline, sms_data, call_data, email_data)
-        if anomaly_summary:
-            print("\n" + "="*70)
-            print(" ANOMALY DETECTION SUMMARY")
-            print("="*70)
-            for item in anomaly_summary:
-                print(f"• {item}")
+        # 1. Communication Source Distribution
+        print("\n1. Communication Source Distribution...")
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
         
-        # 1. TIMELINE HEATMAP (Daily Activity Pattern)
-        print("\n1. Creating Daily Activity Heatmap...")
-        create_daily_heatmap_with_display(df, timestamp, plt)
+        source_counts = df['source'].value_counts()
+        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
         
-        # 2. COMMUNICATION SOURCE DISTRIBUTION
-        print("2. Creating Communication Source Chart...")
-        create_source_distribution_with_display(df, timestamp, plt)
+        # Pie chart
+        ax1.pie(source_counts.values, labels=source_counts.index, autopct='%1.1f%%',
+                colors=colors[:len(source_counts)], startangle=90)
+        ax1.set_title('Communication Source Distribution', fontsize=12, fontweight='bold')
         
-        # 3. HOURLY ACTIVITY PATTERN
-        print("3. Creating Hourly Activity Pattern...")
-        create_hourly_pattern_with_display(df, timestamp, plt)
+        # Bar chart
+        bars = ax2.bar(range(len(source_counts)), source_counts.values, 
+                       color=colors[:len(source_counts)], alpha=0.8)
+        ax2.set_title('Communication Source Counts', fontsize=12, fontweight='bold')
+        ax2.set_xlabel('Source Type')
+        ax2.set_ylabel('Number of Events')
+        ax2.set_xticks(range(len(source_counts)))
+        ax2.set_xticklabels(source_counts.index, rotation=0)
         
-        # 4. DAY OF WEEK ANALYSIS
-        print("4. Creating Day of Week Analysis...")
-        create_day_of_week_analysis_with_display(df, timestamp, plt)
+        # Add value labels
+        for bar in bars:
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{int(height):,}', ha='center', va='bottom', fontsize=10)
         
-        # 5. FORENSIC CATEGORY BREAKDOWN
-        print("5. Creating Forensic Category Breakdown...")
-        create_forensic_categories_with_display(df, timestamp, plt)
+        plt.suptitle('Communication Sources Analysis', fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(f'communication_sources_{timestamp}.png', dpi=300, bbox_inches='tight')
+        print(f"   Saved: communication_sources_{timestamp}.png")
+        if IN_JUPYTER:
+            plt.show()
+        else:
+            plt.close()
         
-        # 6. TOP CONTACTS VISUALIZATION
-        print("6. Creating Top Contacts Visualization...")
-        contact_counts, contact_details = extract_contacts(sms_data, call_data, email_data)
-        create_top_contacts_chart_with_display(contact_counts, timestamp, plt)
+        # 2. Hourly Activity Pattern
+        print("\n2. Hourly Activity Pattern...")
+        fig, ax = plt.subplots(figsize=(12, 6))
         
-        # 7. MONTHLY TREND ANALYSIS
-        print("7. Creating Monthly Trend Analysis...")
-        create_monthly_trend_with_display(df, timestamp, plt)
+        hourly_counts = df['hour'].value_counts().sort_index()
+        bars = ax.bar(hourly_counts.index, hourly_counts.values, alpha=0.7, color='#4ECDC4')
         
-        # 8. CALL DURATION ANALYSIS (if call data exists)
-        if call_data:
-            print("8. Creating Call Duration Analysis...")
-            create_call_analysis_with_display(call_data, timestamp, plt)
+        ax.set_title('Hourly Communication Activity', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Hour of Day', fontsize=12)
+        ax.set_ylabel('Number of Events', fontsize=12)
+        ax.set_xticks(range(0, 24, 2))
+        ax.grid(True, alpha=0.3, axis='y')
         
-        # 9. SMS DIRECTION ANALYSIS
-        if sms_data:
-            print("9. Creating SMS Analysis...")
-            create_sms_analysis_with_display(sms_data, timestamp, plt)
+        plt.tight_layout()
+        plt.savefig(f'hourly_activity_{timestamp}.png', dpi=300, bbox_inches='tight')
+        print(f"   Saved: hourly_activity_{timestamp}.png")
+        if IN_JUPYTER:
+            plt.show()
+        else:
+            plt.close()
         
-        # 10. ANOMALY VISUALIZATION (if anomalies found)
-        if anomaly_summary and len(anomaly_summary) > 0:
-            print("10. Creating Anomaly Visualization...")
-            create_anomaly_visualization(timeline, timestamp, plt)
+        # 3. Day of Week Analysis
+        print("\n3. Day of Week Analysis...")
+        fig, ax = plt.subplots(figsize=(10, 6))
         
-        print(f"\n✓ All visualizations have been saved as separate PNG files")
-        print(f"  Files are named with timestamp: {timestamp}")
+        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        day_counts = df['day_of_week'].value_counts().reindex(day_order)
         
-        # Export anomaly summary to file
-        if anomaly_summary:
-            export_anomaly_summary(anomaly_summary, timestamp)
+        bars = ax.bar(range(len(day_counts)), day_counts.values, alpha=0.7, color='#FF6B6B')
+        ax.set_title('Activity by Day of Week', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Day of Week', fontsize=12)
+        ax.set_ylabel('Number of Events', fontsize=12)
+        ax.set_xticks(range(len(day_counts)))
+        ax.set_xticklabels([d[:3] for d in day_counts.index], rotation=0)
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        plt.tight_layout()
+        plt.savefig(f'day_of_week_{timestamp}.png', dpi=300, bbox_inches='tight')
+        print(f"   Saved: day_of_week_{timestamp}.png")
+        if IN_JUPYTER:
+            plt.show()
+        else:
+            plt.close()
+        
+        print(f"\n✓ All visualizations saved with timestamp: {timestamp}")
         
     except Exception as e:
         print(f" Visualization error: {e}")
         import traceback
         traceback.print_exc()
-    finally:
-        # Don't close figures if in Jupyter
-        if not IN_JUPYTER:
-            plt.close('all')
-
+        
 # ============================================================================
-# INDIVIDUAL VISUALIZATION FUNCTIONS (WITH DISPLAY SUPPORT)
-# ============================================================================
-
-def create_daily_heatmap_with_display(df, timestamp, plt):
-    """Create daily activity heatmap with display"""
-    fig, ax = plt.subplots(figsize=(14, 8))
-    
-    # Create pivot table for heatmap
-    df['date_str'] = df['date'].astype(str)
-    daily_data = df.groupby(['date_str', 'hour']).size().unstack(fill_value=0)
-    
-    if daily_data.empty:
-        print("   No data for heatmap")
-        plt.close(fig)
-        return
-    
-    # Plot heatmap
-    import numpy as np
-    im = ax.imshow(daily_data.T, aspect='auto', cmap='YlOrRd', interpolation='nearest')
-    
-    # Set labels
-    ax.set_xlabel('Date', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Hour of Day', fontsize=12, fontweight='bold')
-    
-    # Set ticks
-    if len(daily_data) > 30:
-        xticks = range(0, len(daily_data), max(1, len(daily_data)//30))
-        ax.set_xticks(xticks)
-        ax.set_xticklabels([daily_data.index[i] for i in xticks], rotation=45, ha='right')
-    else:
-        ax.set_xticks(range(len(daily_data)))
-        ax.set_xticklabels(daily_data.index, rotation=45, ha='right')
-    
-    ax.set_yticks(range(24))
-    ax.set_yticklabels([f"{h:02d}:00" for h in range(24)])
-    
-    # Add colorbar
-    cbar = plt.colorbar(im, ax=ax)
-    cbar.set_label('Number of Events', fontsize=10)
-    
-    ax.set_title('Daily Communication Activity Heatmap', fontsize=14, fontweight='bold', pad=20)
-    plt.tight_layout()
-    display_and_save_plot(fig, f'daily_heatmap_{timestamp}.png', plt)
-
-def create_source_distribution_with_display(df, timestamp, plt):
-    """Create communication source distribution chart with display"""
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-    
-    # Pie chart
-    source_counts = df['source'].value_counts()
-    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFD166']
-    wedges, texts, autotexts = ax1.pie(source_counts.values, labels=source_counts.index, 
-                                       autopct='%1.1f%%', colors=colors[:len(source_counts)],
-                                       startangle=90, textprops={'fontsize': 10})
-    
-    # Make percentage text bold
-    for autotext in autotexts:
-        autotext.set_fontweight('bold')
-    
-    ax1.set_title('Communication Source Distribution', fontsize=12, fontweight='bold')
-    
-    # Bar chart
-    bars = ax2.bar(range(len(source_counts)), source_counts.values, 
-                   color=colors[:len(source_counts)], alpha=0.8)
-    ax2.set_title('Communication Source Counts', fontsize=12, fontweight='bold')
-    ax2.set_xlabel('Source Type')
-    ax2.set_ylabel('Number of Events')
-    ax2.set_xticks(range(len(source_counts)))
-    ax2.set_xticklabels(source_counts.index, rotation=0)
-    
-    # Add value labels on bars
-    import numpy as np
-    for bar in bars:
-        height = bar.get_height()
-        ax2.text(bar.get_x() + bar.get_width()/2., height + max(source_counts.values)*0.01,
-                f'{int(height):,}', ha='center', va='bottom', fontsize=10, fontweight='bold')
-    
-    plt.suptitle('Communication Sources Analysis', fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    display_and_save_plot(fig, f'source_distribution_{timestamp}.png', plt)
-
-def create_hourly_pattern_with_display(df, timestamp, plt):
-    """Create hourly activity pattern chart with display"""
-    fig, ax = plt.subplots(figsize=(12, 6))
-    
-    hourly_counts = df['hour'].value_counts().sort_index()
-    
-    # Create bar chart with gradient color
-    import numpy as np
-    colors = plt.cm.RdYlBu(np.linspace(0, 1, len(hourly_counts)))
-    bars = ax.bar(hourly_counts.index, hourly_counts.values, color=colors, alpha=0.8, edgecolor='black')
-    
-    ax.set_title('Hourly Communication Activity Pattern', fontsize=14, fontweight='bold')
-    ax.set_xlabel('Hour of Day', fontsize=12)
-    ax.set_ylabel('Number of Events', fontsize=12)
-    ax.set_xticks(range(0, 24, 1))
-    ax.set_xticklabels([f"{h:02d}:00" for h in range(0, 24, 1)], rotation=45)
-    ax.grid(True, alpha=0.3, axis='y')
-    
-    # Add trend line
-    from scipy.ndimage import gaussian_filter1d
-    if len(hourly_counts) > 1:
-        smoothed = gaussian_filter1d(hourly_counts.values, sigma=1)
-        ax.plot(hourly_counts.index, smoothed, color='red', linewidth=2, label='Trend')
-        ax.legend()
-    
-    # Add value labels on top of bars
-    for bar in bars:
-        height = bar.get_height()
-        if height > 0:
-            ax.text(bar.get_x() + bar.get_width()/2., height + max(hourly_counts.values)*0.01,
-                   f'{int(height):,}', ha='center', va='bottom', fontsize=9, fontweight='bold')
-    
-    plt.tight_layout()
-    display_and_save_plot(fig, f'hourly_pattern_{timestamp}.png', plt)
-
-def create_day_of_week_analysis_with_display(df, timestamp, plt):
-    """Create day of week analysis chart with display"""
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-    
-    # Define order
-    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    
-    # Day of week counts
-    day_counts = df['day_of_week'].value_counts().reindex(day_order)
-    
-    # Bar chart
-    import numpy as np
-    colors = plt.cm.Set3(np.linspace(0, 1, len(day_counts)))
-    bars = ax1.bar(range(len(day_counts)), day_counts.values, color=colors, alpha=0.8, edgecolor='black')
-    ax1.set_title('Activity by Day of Week', fontsize=12, fontweight='bold')
-    ax1.set_xlabel('Day of Week')
-    ax1.set_ylabel('Number of Events')
-    ax1.set_xticks(range(len(day_counts)))
-    ax1.set_xticklabels([d[:3] for d in day_counts.index], rotation=0)
-    ax1.grid(True, alpha=0.3, axis='y')
-    
-    # Add value labels
-    for bar in bars:
-        height = bar.get_height()
-        ax1.text(bar.get_x() + bar.get_width()/2., height + max(day_counts.values)*0.01,
-                f'{int(height):,}', ha='center', va='bottom', fontsize=10, fontweight='bold')
-    
-    # Donut chart for percentage
-    ax2.pie(day_counts.values, labels=day_counts.index, autopct='%1.1f%%',
-            colors=colors, startangle=90, textprops={'fontsize': 9})
-    
-    # Draw a circle at the center to make it a donut
-    centre_circle = plt.Circle((0,0), 0.70, fc='white')
-    ax2.add_artist(centre_circle)
-    
-    ax2.set_title('Day of Week Distribution', fontsize=12, fontweight='bold')
-    
-    plt.suptitle('Weekly Activity Pattern Analysis', fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    display_and_save_plot(fig, f'day_of_week_{timestamp}.png', plt)
-
-def create_forensic_categories_with_display(df, timestamp, plt):
-    """Create forensic category breakdown chart with display"""
-    if 'forensic_tag' not in df.columns:
-        print("   No forensic tags available")
-        return
-    
-    fig, ax = plt.subplots(figsize=(12, 7))
-    
-    tag_counts = df['forensic_tag'].value_counts()
-    
-    # Horizontal bar chart for better readability
-    import numpy as np
-    colors = plt.cm.tab20c(np.linspace(0, 1, len(tag_counts)))
-    bars = ax.barh(range(len(tag_counts)), tag_counts.values, color=colors, alpha=0.8, edgecolor='black')
-    
-    ax.set_title('Forensic Category Analysis', fontsize=14, fontweight='bold')
-    ax.set_xlabel('Number of Events', fontsize=12)
-    ax.set_yticks(range(len(tag_counts)))
-    ax.set_yticklabels(tag_counts.index, fontsize=10)
-    ax.invert_yaxis()  # Highest at top
-    ax.grid(True, alpha=0.3, axis='x')
-    
-    # Add value labels
-    for i, (bar, value) in enumerate(zip(bars, tag_counts.values)):
-        ax.text(value + max(tag_counts.values)*0.01, bar.get_y() + bar.get_height()/2.,
-               f'{value:,} ({value/len(df)*100:.1f}%)', 
-               ha='left', va='center', fontsize=9, fontweight='bold')
-    
-    # Add percentage breakdown on the side
-    total = len(df)
-    ax.text(1.02, 0.5, 'Percentage Breakdown:', transform=ax.transAxes, 
-            fontsize=10, fontweight='bold', va='center')
-    
-    for i, (tag, count) in enumerate(tag_counts.items()):
-        percentage = count/total*100
-        ax.text(1.02, 0.4 - i*0.07, f'{tag}: {percentage:.1f}%', 
-                transform=ax.transAxes, fontsize=9, va='center')
-    
-    plt.tight_layout()
-    display_and_save_plot(fig, f'forensic_categories_{timestamp}.png', plt)
-
-def create_top_contacts_chart_with_display(contact_counts, timestamp, plt):
-    """Create top contacts visualization with display"""
-    if not contact_counts:
-        print("   No contact data available")
-        return
-    
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
-    
-    top_contacts = contact_counts.most_common(15)
-    contact_names = [c[0][:25] + '...' if len(c[0]) > 25 else c[0] for c in top_contacts]
-    contact_values = [c[1] for c in top_contacts]
-    
-    # Horizontal bar chart
-    import numpy as np
-    colors = plt.cm.viridis(np.linspace(0.2, 0.8, len(contact_names)))
-    bars1 = ax1.barh(range(len(contact_names)), contact_values, color=colors, alpha=0.8, edgecolor='black')
-    ax1.set_title('Top 15 Contacts by Interaction Count', fontsize=12, fontweight='bold')
-    ax1.set_xlabel('Number of Interactions')
-    ax1.set_yticks(range(len(contact_names)))
-    ax1.set_yticklabels(contact_names, fontsize=9)
-    ax1.invert_yaxis()
-    ax1.grid(True, alpha=0.3, axis='x')
-    
-    # Add value labels
-    for i, (bar, value) in enumerate(zip(bars1, contact_values)):
-        ax1.text(value + max(contact_values)*0.01, bar.get_y() + bar.get_height()/2.,
-                f'{value:,}', ha='left', va='center', fontsize=9, fontweight='bold')
-    
-    # Pie chart for top 10
-    if len(top_contacts) > 10:
-        top_10 = top_contacts[:10]
-    else:
-        top_10 = top_contacts
-    
-    top_names = [c[0][:15] + '...' if len(c[0]) > 15 else c[0] for c in top_10]
-    top_values = [c[1] for c in top_10]
-    
-    wedges, texts, autotexts = ax2.pie(top_values, labels=top_names, autopct='%1.1f%%',
-                                       startangle=90, textprops={'fontsize': 8})
-    
-    # Make labels more readable
-    for autotext in autotexts:
-        autotext.set_fontweight('bold')
-        autotext.set_fontsize(9)
-    
-    ax2.set_title('Top Contacts Distribution', fontsize=12, fontweight='bold')
-    
-    plt.suptitle('Contact Network Analysis', fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    display_and_save_plot(fig, f'top_contacts_{timestamp}.png', plt)
-
-def create_monthly_trend_with_display(df, timestamp, plt):
-    """Create monthly trend analysis with display"""
-    fig, ax = plt.subplots(figsize=(12, 6))
-    
-    monthly_counts = df.groupby('month').size()
-    
-    if len(monthly_counts) < 2:
-        print("   Insufficient monthly data")
-        plt.close(fig)
-        return
-    
-    # Line chart with markers
-    import numpy as np
-    ax.plot(range(len(monthly_counts)), monthly_counts.values, 
-            marker='o', linewidth=2.5, markersize=8, color='#2E86AB', label='Monthly Events')
-    
-    # Add trend line
-    if len(monthly_counts) > 2:
-        z = np.polyfit(range(len(monthly_counts)), monthly_counts.values, 1)
-        p = np.poly1d(z)
-        ax.plot(range(len(monthly_counts)), p(range(len(monthly_counts))), 
-                'r--', linewidth=2, alpha=0.7, label='Trend Line')
-    
-    ax.set_title('Monthly Communication Trend', fontsize=14, fontweight='bold')
-    ax.set_xlabel('Month', fontsize=12)
-    ax.set_ylabel('Number of Events', fontsize=12)
-    ax.set_xticks(range(len(monthly_counts)))
-    ax.set_xticklabels(monthly_counts.index, rotation=45, ha='right')
-    ax.grid(True, alpha=0.3)
-    ax.legend()
-    
-    # Add value labels on points
-    for i, value in enumerate(monthly_counts.values):
-        ax.text(i, value + max(monthly_counts.values)*0.02, f'{value:,}', 
-                ha='center', va='bottom', fontsize=9, fontweight='bold')
-    
-    # Add statistics
-    avg_events = monthly_counts.mean()
-    total_events = monthly_counts.sum()
-    ax.text(0.02, 0.98, f'Average: {avg_events:.1f} events/month\nTotal: {total_events:,} events', 
-            transform=ax.transAxes, fontsize=10, verticalalignment='top',
-            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-    
-    plt.tight_layout()
-    display_and_save_plot(fig, f'monthly_trend_{timestamp}.png', plt)
-
-def create_call_analysis_with_display(call_data, timestamp, plt):
-    """Create call-specific analysis with display"""
-    if not call_data:
-        print("   No call data available")
-        return
-    
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
-    
-    # Prepare call data
-    call_df = pd.DataFrame(call_data)
-    
-    # 1. Call Type Distribution
-    if 'type' in call_df.columns:
-        call_types = call_df['type'].value_counts()
-        import numpy as np
-        colors1 = plt.cm.Set2(np.linspace(0, 1, len(call_types)))
-        ax1.pie(call_types.values, labels=call_types.index, autopct='%1.1f%%',
-                colors=colors1, startangle=90, textprops={'fontsize': 9})
-        ax1.set_title('Call Type Distribution', fontsize=11, fontweight='bold')
-    else:
-        ax1.text(0.5, 0.5, 'No call type data', ha='center', va='center', transform=ax1.transAxes)
-    
-    # 2. Call Duration Distribution
-    if 'duration' in call_df.columns:
-        durations = call_df['duration']
-        ax2.hist(durations, bins=30, alpha=0.7, color='#4ECDC4', edgecolor='black')
-        ax2.set_title('Call Duration Distribution', fontsize=11, fontweight='bold')
-        ax2.set_xlabel('Duration (seconds)')
-        ax2.set_ylabel('Number of Calls')
-        ax2.grid(True, alpha=0.3)
-        
-        # Add statistics
-        mean_duration = durations.mean()
-        median_duration = durations.median()
-        ax2.axvline(mean_duration, color='red', linestyle='--', label=f'Mean: {mean_duration:.1f}s')
-        ax2.axvline(median_duration, color='green', linestyle='--', label=f'Median: {median_duration:.1f}s')
-        ax2.legend()
-    else:
-        ax2.text(0.5, 0.5, 'No duration data', ha='center', va='center', transform=ax2.transAxes)
-    
-    # 3. Calls by Time of Day
-    call_df['timestamp'] = pd.to_datetime(call_df['timestamp'])
-    call_df['hour'] = call_df['timestamp'].dt.hour
-    hourly_calls = call_df['hour'].value_counts().sort_index()
-    
-    ax3.bar(hourly_calls.index, hourly_calls.values, alpha=0.7, color='#FF6B6B', edgecolor='black')
-    ax3.set_title('Calls by Hour of Day', fontsize=11, fontweight='bold')
-    ax3.set_xlabel('Hour of Day')
-    ax3.set_ylabel('Number of Calls')
-    ax3.set_xticks(range(0, 24, 2))
-    ax3.grid(True, alpha=0.3)
-    
-    # 4. Total Call Duration by Type
-    if 'type' in call_df.columns and 'duration' in call_df.columns:
-        duration_by_type = call_df.groupby('type')['duration'].sum().sort_values(ascending=False)
-        import numpy as np
-        colors4 = plt.cm.viridis(np.linspace(0.2, 0.8, len(duration_by_type)))
-        bars = ax4.bar(range(len(duration_by_type)), duration_by_type.values/60, color=colors4, alpha=0.8)
-        ax4.set_title('Total Call Duration by Type (minutes)', fontsize=11, fontweight='bold')
-        ax4.set_xlabel('Call Type')
-        ax4.set_ylabel('Total Minutes')
-        ax4.set_xticks(range(len(duration_by_type)))
-        ax4.set_xticklabels(duration_by_type.index, rotation=45, ha='right')
-        ax4.grid(True, alpha=0.3, axis='y')
-        
-        # Add value labels
-        for bar, value in zip(bars, duration_by_type.values/60):
-            ax4.text(bar.get_x() + bar.get_width()/2., bar.get_height() + max(duration_by_type.values/60)*0.01,
-                    f'{value:.1f}m', ha='center', va='bottom', fontsize=8, fontweight='bold')
-    else:
-        ax4.text(0.5, 0.5, 'No duration by type data', ha='center', va='center', transform=ax4.transAxes)
-    
-    plt.suptitle('Phone Call Analysis', fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    display_and_save_plot(fig, f'call_analysis_{timestamp}.png', plt)
-
-def create_sms_analysis_with_display(sms_data, timestamp, plt):
-    """Create SMS-specific analysis with display"""
-    if not sms_data:
-        print("   No SMS data available")
-        return
-    
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
-    
-    # Prepare SMS data
-    sms_df = pd.DataFrame(sms_data)
-    
-    # 1. SMS Direction Distribution
-    if 'direction' in sms_df.columns:
-        direction_counts = sms_df['direction'].value_counts()
-        colors1 = ['#4ECDC4' if d == 'OUTGOING' else '#FF6B6B' for d in direction_counts.index]
-        ax1.pie(direction_counts.values, labels=direction_counts.index, autopct='%1.1f%%',
-                colors=colors1, startangle=90, textprops={'fontsize': 10})
-        ax1.set_title('SMS Direction Distribution', fontsize=11, fontweight='bold')
-    else:
-        ax1.text(0.5, 0.5, 'No direction data', ha='center', va='center', transform=ax1.transAxes)
-    
-    # 2. SMS Length Distribution
-    if 'message' in sms_df.columns:
-        sms_lengths = sms_df['message'].apply(len)
-        ax2.hist(sms_lengths, bins=30, alpha=0.7, color='#96CEB4', edgecolor='black')
-        ax2.set_title('SMS Message Length Distribution', fontsize=11, fontweight='bold')
-        ax2.set_xlabel('Message Length (characters)')
-        ax2.set_ylabel('Number of SMS')
-        ax2.grid(True, alpha=0.3)
-        
-        # Add statistics
-        mean_length = sms_lengths.mean()
-        ax2.axvline(mean_length, color='red', linestyle='--', label=f'Mean: {mean_length:.1f} chars')
-        ax2.legend()
-    else:
-        ax2.text(0.5, 0.5, 'No message data', ha='center', va='center', transform=ax2.transAxes)
-    
-    # 3. SMS by Time of Day
-    sms_df['timestamp'] = pd.to_datetime(sms_df['timestamp'])
-    sms_df['hour'] = sms_df['timestamp'].dt.hour
-    hourly_sms = sms_df['hour'].value_counts().sort_index()
-    
-    ax3.bar(hourly_sms.index, hourly_sms.values, alpha=0.7, color='#FFD166', edgecolor='black')
-    ax3.set_title('SMS by Hour of Day', fontsize=11, fontweight='bold')
-    ax3.set_xlabel('Hour of Day')
-    ax3.set_ylabel('Number of SMS')
-    ax3.set_xticks(range(0, 24, 2))
-    ax3.grid(True, alpha=0.3)
-    
-    # 4. Daily SMS Volume
-    sms_df['date'] = sms_df['timestamp'].dt.date
-    daily_sms = sms_df.groupby('date').size()
-    
-    ax4.plot(daily_sms.index, daily_sms.values, marker='o', linewidth=2, color='#9D4EDD', markersize=4)
-    ax4.set_title('Daily SMS Volume', fontsize=11, fontweight='bold')
-    ax4.set_xlabel('Date')
-    ax4.set_ylabel('Number of SMS')
-    ax4.tick_params(axis='x', rotation=45)
-    ax4.grid(True, alpha=0.3)
-    
-    # Add moving average
-    if len(daily_sms) > 7:
-        moving_avg = daily_sms.rolling(window=7).mean()
-        ax4.plot(daily_sms.index, moving_avg.values, 'r--', linewidth=2, label='7-day MA')
-        ax4.legend()
-    
-    plt.suptitle('SMS Analysis', fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    display_and_save_plot(fig, f'sms_analysis_{timestamp}.png', plt)
-
-def create_anomaly_visualization(timeline, timestamp, plt):
-    """Create visualization of detected anomalies"""
-    fig, ax = plt.subplots(figsize=(12, 6))
-    
-    # Extract dates and counts
-    df = pd.DataFrame(timeline)
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
-    df['date'] = df['timestamp'].dt.date
-    
-    # Get daily counts
-    daily_counts = df.groupby('date').size()
-    
-    # Plot daily activity
-    ax.plot(daily_counts.index, daily_counts.values, 'b-', linewidth=2, label='Daily Events', alpha=0.7)
-    
-    # Add 7-day moving average
-    if len(daily_counts) > 7:
-        moving_avg = daily_counts.rolling(window=7).mean()
-        ax.plot(daily_counts.index, moving_avg.values, 'r--', linewidth=2, label='7-day Moving Average')
-    
-    # Highlight anomalies
-    flags = detect_suspicious_patterns(timeline)
-    if flags:
-        # Mark peak days
-        peak_days = daily_counts.nlargest(3)
-        for day, count in peak_days.items():
-            ax.plot(day, count, 'ro', markersize=10, label='Peak Day' if day == peak_days.index[0] else "")
-            ax.annotate(f'Peak: {count}', xy=(day, count), xytext=(10, 10),
-                       textcoords='offset points', fontweight='bold')
-    
-    ax.set_title('Anomaly Detection: Daily Activity Pattern', fontsize=14, fontweight='bold')
-    ax.set_xlabel('Date', fontsize=12)
-    ax.set_ylabel('Number of Events', fontsize=12)
-    ax.tick_params(axis='x', rotation=45)
-    ax.grid(True, alpha=0.3)
-    ax.legend()
-    
-    # Add anomaly statistics
-    if len(daily_counts) > 0:
-        mean_events = daily_counts.mean()
-        std_events = daily_counts.std()
-        threshold = mean_events + 2 * std_events
-        
-        anomaly_days = daily_counts[daily_counts > threshold]
-        if not anomaly_days.empty:
-            ax.axhline(y=threshold, color='orange', linestyle=':', linewidth=2, 
-                      label=f'Anomaly Threshold ({threshold:.1f})')
-            for day in anomaly_days.index:
-                ax.axvline(x=day, color='yellow', alpha=0.3, linestyle='--')
-    
-    plt.tight_layout()
-    display_and_save_plot(fig, f'anomaly_detection_{timestamp}.png', plt)
-# ============================================================================
-# SIMPLIFIED VISUALIZATION MENU OPTION
-# ============================================================================
-
-def visualization_menu(timeline, sms_data, call_data, email_data):
-    """Interactive visualization menu with display in Jupyter"""
-    
-    # Check for matplotlib first
-    matplotlib_available, plt, sns = check_matplotlib()
-    if not matplotlib_available:
-        print("Matplotlib/Seaborn not available for visualizations.")
-        return
-    
-    plt.style.use('seaborn-v0_8-darkgrid')
-    sns.set_palette("husl")
-    
-    # Convert to DataFrame for easier manipulation
-    df = pd.DataFrame(timeline)
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
-    df['date'] = df['timestamp'].dt.date
-    df['hour'] = df['timestamp'].dt.hour
-    df['day_of_week'] = df['timestamp'].dt.day_name()
-    df['month'] = df['timestamp'].dt.to_period('M').astype(str)
-    
-    # Get contact counts for contacts visualization
-    contact_counts, contact_details = extract_contacts(sms_data, call_data, email_data)
-    
-    # Get timestamp for filenames
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
-    while True:
-        print("\n" + "="*70)
-        print(" VISUALIZATION OPTIONS")
-        print("="*70)
-        print("1.  Create All Visualizations (Recommended)")
-        print("2.  Daily Activity Heatmap")
-        print("3.  Communication Source Analysis")
-        print("4.  Hourly Pattern Analysis")
-        print("5.  Day of Week Analysis")
-        print("6.  Forensic Categories")
-        print("7.  Top Contacts Analysis")
-        print("8.  Monthly Trends")
-        print("9.  Call Analysis")
-        print("10. SMS Analysis")
-        print("11. Anomaly Detection Visualization")
-        print("12. Return to Main Menu")
-        
-        choice = input("\nSelect visualization option (1-12): ").strip()
-        
-        try:
-            if choice == '1':
-                # Create all visualizations
-                print("\nCreating all visualizations...")
-                create_visualizations_with_display(timeline, sms_data, call_data, email_data)
-                
-            elif choice == '2':
-                # Daily Activity Heatmap
-                print("\nCreating Daily Activity Heatmap...")
-                create_daily_heatmap_with_display(df, timestamp, plt)
-                
-            elif choice == '3':
-                # Communication Source Analysis
-                print("\nCreating Communication Source Analysis...")
-                create_source_distribution_with_display(df, timestamp, plt)
-                
-            elif choice == '4':
-                # Hourly Pattern Analysis
-                print("\nCreating Hourly Pattern Analysis...")
-                create_hourly_pattern_with_display(df, timestamp, plt)
-                
-            elif choice == '5':
-                # Day of Week Analysis
-                print("\nCreating Day of Week Analysis...")
-                create_day_of_week_analysis_with_display(df, timestamp, plt)
-                
-            elif choice == '6':
-                # Forensic Categories
-                print("\nCreating Forensic Categories Analysis...")
-                create_forensic_categories_with_display(df, timestamp, plt)
-                
-            elif choice == '7':
-                # Top Contacts Analysis
-                print("\nCreating Top Contacts Analysis...")
-                create_top_contacts_chart_with_display(contact_counts, timestamp, plt)
-                
-            elif choice == '8':
-                # Monthly Trends
-                print("\nCreating Monthly Trend Analysis...")
-                create_monthly_trend_with_display(df, timestamp, plt)
-                
-            elif choice == '9':
-                # Call Analysis
-                print("\nCreating Call Analysis...")
-                create_call_analysis_with_display(call_data, timestamp, plt)
-                
-            elif choice == '10':
-                # SMS Analysis
-                print("\nCreating SMS Analysis...")
-                create_sms_analysis_with_display(sms_data, timestamp, plt)
-                
-            elif choice == '11':
-                # Anomaly Detection Visualization
-                print("\nCreating Anomaly Detection Visualization...")
-                create_anomaly_visualization(timeline, timestamp, plt)
-                
-            elif choice == '12':
-                # Return to Main Menu
-                print("\nReturning to Main Menu...")
-                if not IN_JUPYTER:
-                    plt.close('all')
-                return
-                
-            else:
-                print("Invalid option. Please select 1-12.")
-                
-        except Exception as e:
-            print(f"Error creating visualization: {e}")
-            import traceback
-            traceback.print_exc()
-            
-        # Ask if user wants to create another visualization
-        if choice not in ['1', '12']:
-            another = input("\nCreate another visualization? (y/n): ").lower().strip()
-            if another != 'y':
-                if not IN_JUPYTER:
-                    plt.close('all')
-                return
-
-
-# ============================================================================
-# MAIN FUNCTION
+# MAIN FUNCTION WITH SIMPLIFIED MENU
 # ============================================================================
 
 def main():
-    """Main function with enhanced error handling"""
+    """Main function with simplified menu"""
     print("\n" + "="*70)
-    print(" Multi Source Event Sequence Reconstruction")
+    print(" COMMUNICATION FORENSIC ANALYSIS SYSTEM")
     print("="*70)
-    print("\nLoading forensic data...")
+    print("\nLoading data files...")
     
     try:
         # Load data
@@ -2125,147 +1866,60 @@ def main():
             print(" Failed to create timeline. Exiting.")
             return
         
+        # Display total events first
+        total_events = len(timeline)
+        print(f"\n📊 TOTAL COMMUNICATION EVENTS LOADED: {total_events:,}")
+        
+        # Show contact summary
+        contact_counts, _ = extract_contacts(sms_data, call_data, email_data)
+        print(f" UNIQUE CONTACTS IDENTIFIED: {len(contact_counts):,}")
+        
         # Main menu loop
         while True:
             print("\n" + "="*70)
-            print(" FORENSIC ANALYST MENU")
+            print(" MAIN MENU")
             print("="*70)
-            print("1.  Search Timeline Events")
-            print("2.  View Detailed Analysis")
-            print("3.  Export Forensic Report")
-            print("4.  Visualize Data Patterns (Display in Jupyter & Save)")
-            print("5.  Export All Data for Legal Proceedings")
-            print("6.  Generate Report")  # NEW OPTION
-            print("7.  Exit")
+            print("1. Timeline Events (Show all communications)")
+            print("2. View Detailed Analysis")
+            print("3. Visualize Data Patterns")
+            print("4. Suspicious Communications")
+            print("5. Export Forensic Report")
+            print("6. Exit")
             print("="*70)
             
             choice = input("\nSelect option (1-6): ").strip()
             
             if choice == '1':
-                # Search functionality
-                print("\n" + "="*70)
-                print(" SEARCH TIMELINE EVENTS")
-                print("="*70)
-                search_term = input("Enter search term (contact/phone/email/keyword): ").strip().lower()
-                
-                if search_term:
-                    results = []
-                    for event in timeline:
-                        if (search_term in str(event.get('contact', '')).lower() or
-                            search_term in str(event.get('content', '')).lower() or
-                            search_term in str(event.get('source', '')).lower() or
-                            search_term in str(event.get('type', '')).lower() or
-                            search_term in str(event.get('forensic_tag', '')).lower()):
-                            results.append(event)
-                    
-                    if results:
-                        print(f"\n Found {len(results):,} matching events:")
-                        print("-" * 100)
-                        print(f"{'Timestamp':<20} {'Source':<8} {'Contact':<25} {'Type':<12} {'Content':<30}")
-                        print("-" * 100)
-                        
-                        for event in results[:20]:  # Show first 20
-                            timestamp = event['timestamp'].strftime('%Y-%m-%d %H:%M')
-                            source = event['source']
-                            contact = event['contact'][:23] + "..." if len(event['contact']) > 23 else event['contact']
-                            etype = event['type'][:10] if event['type'] else ''
-                            content = event['content'][:27] + "..." if len(event['content']) > 27 else event['content']
-                            
-                            print(f"{timestamp:<20} {source:<8} {contact:<25} {etype:<12} {content:<30}")
-                        
-                        if len(results) > 20:
-                            print(f"... and {len(results) - 20:,} more results")
-                        
-                        # Export search results
-                        export_search = input("\nExport these results to CSV? (y/n): ").lower()
-                        if export_search == 'y':
-                            export_search_results(results, search_term)
-                    else:
-                        print(" No matching events found.")
+                display_timeline_events(timeline)
             
             elif choice == '2':
-                analyze_data(sms_data, call_data, email_data)
+                view_detailed_analysis(timeline, sms_data, call_data, email_data)
             
             elif choice == '3':
-                export_forensic_report(timeline, sms_data, call_data, email_data)
+                create_simple_visualizations(timeline, sms_data, call_data, email_data)
             
             elif choice == '4':
-                print("\n" + "="*70)
-                print(" DATA VISUALIZATION")
-                print("="*70)
-                
-                # Create timeline if not already created
-                if not timeline:
-                    print("Creating timeline...")
-                    timeline = create_timeline(sms_data, call_data, email_data)
-                
-                if not timeline:
-                    print("No timeline data available for visualization.")
-                    continue
-                
-                # Show visualization sub-menu
-                visualization_menu(timeline, sms_data, call_data, email_data)
+                suspicious_communications_analysis(timeline)
             
             elif choice == '5':
-                print("\n" + "="*70)
-                print("  EXPORTING ALL DATA FOR LEGAL PROCEEDINGS")
-                print("="*70)
                 export_forensic_report(timeline, sms_data, call_data, email_data)
-                print("\n All forensic data exported for legal proceedings:")
-                
-                # List exported files
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                exported_files = [
-                    f'forensic_report_{timestamp}.txt',
-                    f'forensic_timeline_{timestamp}.csv',
-                    f'forensic_contacts_{timestamp}.csv',
-                    f'forensic_summary_{timestamp}.json',
-                    f'forensic_dashboard_{timestamp}.png'
-                ]
-                
-                for file in exported_files:
-                    if os.path.exists(file):
-                        size = os.path.getsize(file)
-                        print(f"  • {file} ({size:,} bytes)")
             
             elif choice == '6':
                 print("\n" + "="*70)
-                print(" INVESTIGATION SESSION COMPLETED")
+                print(" ANALYSIS COMPLETED")
                 print("="*70)
-                print("All reports and data have been saved.")
+                print("Thank you for using the Communication Forensic Analysis System.")
                 break
             
             else:
-                print(" Invalid option. Please try again.")
+                print(" Invalid option. Please select 1-6.")
     
     except KeyboardInterrupt:
-        print("\n\n Investigation interrupted by user.")
+        print("\n\n Analysis interrupted by user.")
     except Exception as e:
         print(f"\n Unexpected error: {e}")
         import traceback
         traceback.print_exc()
-
-def export_search_results(results, search_term):
-    """Export search results to CSV"""
-    if not results:
-        return
-    
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename = f'search_results_{search_term}_{timestamp}.csv'
-    
-    with open(filename, 'w', newline='', encoding='utf-8') as f:
-        fieldnames = ['timestamp', 'id', 'source', 'contact', 'type', 'content', 'forensic_tag']
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        
-        for event in results:
-            row = event.copy()
-            row['timestamp'] = event['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
-            if 'details' in row:
-                del row['details']
-            writer.writerow(row)
-    
-    print(f" Search results exported to '{filename}'")
 
 # ============================================================================
 # JUPYTER-SPECIFIC HELPER FUNCTIONS
