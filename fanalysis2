@@ -827,7 +827,7 @@ def analyze_data(sms_data, call_data, email_data):
         return []
     
     print(f"\n DATA VOLUME ANALYSIS")
-    print(f"Total Forensic Events: {total_events:,}")
+    print(f"Total Events: {total_events:,}")
     print(f"•  SMS Messages: {len(sms_data):,} ({len(sms_data)/total_events*100:.1f}%)")
     print(f"•  Phone Calls: {len(call_data):,} ({len(call_data)/total_events*100:.1f}%)")
     print(f"•  Emails: {len(email_data):,} ({len(email_data)/total_events*100:.1f}%)")
@@ -1722,7 +1722,7 @@ def export_forensic_report(timeline, sms_data, call_data, email_data):
     with open(report_filename, 'w', encoding='utf-8') as f:
         f.write('\n'.join(report_content))
     
-    print(f" Comprehensive forensic report saved to '{report_filename}'")
+    print(f" Comprehensive report saved to '{report_filename}'")
     
     # Export additional files
     export_timeline_csv(timeline)
@@ -1951,7 +1951,7 @@ def create_simple_visualizations(timeline, sms_data, call_data, email_data):
         else:
             plt.close()
         
-        print(f"\n✓ All visualizations saved with timestamp: {timestamp}")
+        print(f"\n All visualizations saved with timestamp: {timestamp}")
         
     except Exception as e:
         print(f" Visualization error: {e}")
@@ -1965,7 +1965,7 @@ def create_simple_visualizations(timeline, sms_data, call_data, email_data):
 def main():
     """Main function with simplified menu"""
     print("\n" + "="*70)
-    print(" COMMUNICATION FORENSIC ANALYSIS SYSTEM")
+    print(" MULTI SOURCE EVENT RECONSTRUCTION SYSTEM ")
     print("="*70)
     print("\nLoading data files...")
     
