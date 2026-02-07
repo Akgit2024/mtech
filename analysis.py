@@ -2384,7 +2384,6 @@ def main():
     print("\n" + "="*70)
     print(" MULTI SOURCE EVENT RECONSTRUCTION SYSTEM ")
     print("="*70)
-    print("\nLoading data files...")
     
     try:
         # Load data
@@ -2431,7 +2430,7 @@ def main():
         
         # Initial analysis
         print("\n" + "="*70)
-        print(" INITIAL FORENSIC ANALYSIS")
+        print(" INITIAL ANALYSIS")
         print("="*70)
         
         # Count suspicious communications
