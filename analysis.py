@@ -657,9 +657,7 @@ def parse_timestamp(timestamp_str):
 
 def data():
     """Main data loading function with comprehensive reporting"""
-    print("\n" + "="*70)
     print(" LOADING DATA FILES")
-    print("="*70)
     
     # Check what files exist
     files = os.listdir('.')
@@ -681,7 +679,6 @@ def data():
     # Summary
     total_records = len(sms_data) + len(call_data) + len(email_data)
     
-    print("\n" + "="*70)
     print(" DATA LOADING SUMMARY")
     print("="*70)
     print(f" Total records loaded: {total_records:,}")
