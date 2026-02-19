@@ -363,4 +363,3 @@ if __name__ == "__main__":
     create_sms_metadata(sms_records)
     
     print("\n✅ SMS Data generation complete!")
-    print("\n✅ SMS Data generation complete!")
