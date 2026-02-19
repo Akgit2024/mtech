@@ -11,12 +11,22 @@ from datetime import datetime, timedelta
 import os
 import hashlib
 
+# Load master contacts
+with open('master_contacts.json', 'r') as f:
+    MASTER_CONTACTS = json.load(f)
+
+# Now you can access consistent data:
+ARATI_EMAIL = MASTER_CONTACTS['arati']['email']
+ARATI_PHONE = MASTER_CONTACTS['arati']['phone']
+SECRET_SOURCE_EMAIL = MASTER_CONTACTS['secret_source']['email']
+
 # Configuration
 TOTAL_SMS = 185000  # ~100,000 SMS messages
 OUTPUT_FILE = 'SMS-Data.csv'
 
 # Phone number pools
-USER_PHONE = "8318426949"  # The "user's" phone number
+USER_EMAIL = 'arati256@gmail.com'
+USER_PHONE = '8318426949'  # The "user's" phone number
 
 # Generate realistic phone numbers
 def generate_phone_number(area_code=None):
@@ -28,7 +38,7 @@ def generate_phone_number(area_code=None):
 # Contact list (people the user communicates with)
 CONTACTS = {
     'family': [
-        {'name': 'Arati', 'phone': generate_phone_number('212'), 'relationship': 'family'},
+        {'name': 'Arati', 'phone': '8318426949', 'email': 'arati@email.com', 'relationship': 'family'},
         {'name': 'David', 'phone': generate_phone_number('212'), 'relationship': 'family'},
         {'name': 'Sarah', 'phone': generate_phone_number('310'), 'relationship': 'family'},
         {'name': 'Bhagya', 'phone': generate_phone_number('415'), 'relationship': 'family'},
@@ -259,8 +269,22 @@ def generate_sms_data():
         
         minute = random.randint(0, 59)
         second = random.randint(0, 59)
+
+    def generate_correlation_id(contact_name, date, channel='sms'):
+    
+        date_str = date.strftime('%Y%m%d')
+        base_string = f"{contact_name}_{date_str}"
+        return hashlib.md5(base_string.encode()).hexdigest()[:12]
         
         timestamp = start_date + timedelta(days=days_offset, hours=hour, minutes=minute, seconds=second)
+
+        correlation_id = generate_correlation_id(contact['name'], timestamp, 'sms')
+
+        email_hint = ''
+        if 'email' in message.lower() or 'check your mail' in message.lower():
+             email_hint = 'CHECK_EMAIL'
+        elif 'signal' in message.lower() or 'whatsapp' in message.lower():
+             email_hint = 'ENCRYPTED_APP'
         
         # Generate message
         message = generate_message(category, contact['category'])
@@ -280,7 +304,10 @@ def generate_sms_data():
             'Category': category,
             'Relationship': contact['category'],
             'Read': random.choice(['YES', 'NO']),
-            'Message_ID': f"SMS_{i+1:06d}"
+            'Message_ID': f"SMS_{i+1:06d}",
+            'Correlation_ID': correlation_id,  
+            'Email_Hint': email_hint,  
+            'Related_Email': contact.get('email', '') 
         })
         
         if (i + 1) % 10000 == 0:
@@ -293,7 +320,9 @@ def save_sms_data(records):
     print(f"\n💾 Saving to {OUTPUT_FILE}...")
     
     with open(OUTPUT_FILE, 'w', newline='', encoding='utf-8') as f:
-        fieldnames = ['Phone Number', 'Contact Name', 'Direction', 'Message', 'Date/Time', 'Category', 'Relationship', 'Read', 'Message_ID']
+        fieldnames = ['Phone Number', 'Contact Name', 'Direction', 'Message', 'Date/Time', 
+              'Category', 'Relationship', 'Read', 'Message_ID', 'Correlation_ID', 
+              'Email_Hint', 'Related_Email']        
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(records)
@@ -333,4 +362,5 @@ if __name__ == "__main__":
     save_sms_data(sms_records)
     create_sms_metadata(sms_records)
     
+    print("\n✅ SMS Data generation complete!")
     print("\n✅ SMS Data generation complete!")
