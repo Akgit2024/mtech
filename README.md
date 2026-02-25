@@ -38,7 +38,7 @@ Automatically categorizes communications into:
   - Presence of high-risk categories
   - Late-night activity patterns
   - Contact concentration
-  - Coordinated multi-channel patterns
+  - Multi-channel patterns
 - Provides detailed explanations for each risk factor
 
 #### 5. **Comprehensive Reporting**
