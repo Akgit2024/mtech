@@ -70,13 +70,13 @@ pip install pandas numpy matplotlib seaborn ipywidgets
 The system automatically detects and loads data from:
 SMS Data
 
-   # - SMS-Data.csv, sms_data.csv
+   ##### - SMS-Data.csv, sms_data.csv
 
-   # - sms.json, SMS.json, sms_messages.json
+   ##### - sms.json, SMS.json, sms_messages.json
 
 Call Data (CDR)
 
-   # - CDR-Call-Details.csv, call_data.csv, CallDetails.csv
+   ###### - CDR-Call-Details.csv, call_data.csv, CallDetails.csv
 
    # - calls.json, call_log.json, cdr.json
 
