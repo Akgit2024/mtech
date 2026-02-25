@@ -76,15 +76,15 @@ SMS Data
 
 Call Data (CDR)
 
-   ###### - CDR-Call-Details.csv, call_data.csv, CallDetails.csv
+   ##### - CDR-Call-Details.csv, call_data.csv, CallDetails.csv
 
-   # - calls.json, call_log.json, cdr.json
+   ##### - calls.json, call_log.json, cdr.json
 
 Email Data
 
-   # - emails.csv, email_data.csv
+   ##### - emails.csv, email_data.csv
 
-   # - emails.json, email_data.json, mail.json
+   ##### - emails.json, email_data.json, mail.json
 
 ### 🚀 Usage
   Run the main analysis
@@ -93,19 +93,19 @@ Email Data
 
 ### Interactive Menu Options
 
-   # - Timeline Events - View all communications with source/destination details
+   ##### - Timeline Events - View all communications with source/destination details
 
-   # - Detailed Analysis - In-depth communication flow and pattern analysis
+   ##### - Detailed Analysis - In-depth communication flow and pattern analysis
 
-   # - Suspicious Communications - Focused analysis of flagged communications
+   ##### - Suspicious Communications - Focused analysis of flagged communications
 
-   # - Multi-Channel Patterns - Detect coordinated communication sequences
+   ##### - Multi-Channel Patterns - Detect coordinated communication sequences
 
-   # - Visualizations - Generate activity charts and graphs
+   ##### - Visualizations - Generate activity charts and graphs
 
-   # - Export Report - Save comprehensive forensic reports
+   ##### - Export Report - Save comprehensive forensic reports
 
-   # - Exit - End the analysis session
+   ##### - Exit - End the analysis session
 
 ### 📄 License
 
