@@ -59,8 +59,49 @@ Automatically categorizes communications into:
 
 ```bash
 # Clone the repository
-git clone https://github.com/Akgit2024/multi-source-forensics.git
-cd multi-source-forensics
+git clone https://github.com/Akgit2024/Multi-Source.git
+cd Multi-Source
 
 # Install required packages
-pip install pandas numpy matplotlib seaborn ipywidgets 
+pip install pandas numpy matplotlib seaborn ipywidgets
+```
+### 📁 Required Data Files
+
+The system automatically detects and loads data from:
+SMS Data
+
+    SMS-Data.csv, sms_data.csv
+
+    sms.json, SMS.json, sms_messages.json
+
+Call Data (CDR)
+
+    CDR-Call-Details.csv, call_data.csv, CallDetails.csv
+
+    calls.json, call_log.json, cdr.json
+
+Email Data
+
+    emails.csv, email_data.csv
+
+    emails.json, email_data.json, mail.json
+
+### 🚀 Usage
+  # Run the main analysis
+  python forensic_analyzer.py
+
+### Interactive Menu Options
+
+    Timeline Events - View all communications with source/destination details
+
+    Detailed Analysis - In-depth communication flow and pattern analysis
+
+    Suspicious Communications - Focused analysis of flagged communications
+
+    Multi-Channel Patterns - Detect coordinated communication sequences
+
+    Visualizations - Generate activity charts and graphs
+
+    Export Report - Save comprehensive forensic reports
+
+    Exit - End the analysis session
