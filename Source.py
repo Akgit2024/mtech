@@ -1677,144 +1677,174 @@ def extract_topic_from_content(content, medium):
     
     return None
 
-def detect_coordinated_communications(timeline, user_phone=None, time_window_minutes=30):
+def detect_multi_channel_patterns(timeline, user_phone=None):
     """
-    Detect coordinated communications across multiple channels
-    
-    Looks for patterns like:
-    - SMS → Call → Email to same person within time window
-    - Multiple communications to same person across channels
-    - Same topic discussed across different media
+    DEBUG VERSION - Shows exactly what's happening
     """
     print("\n" + "="*70)
-    print(" MULTI-CHANNEL COMMUNICATION ANALYSIS")
+    print(" MULTI-CHANNEL PATTERN DETECTION (DEBUG MODE)")
     print("="*70)
     
     if not timeline:
         print(" No timeline data available.")
         return []
     
-    if len(timeline) < 3:
-        print(" Insufficient data for pattern detection (need at least 3 events).")
-        return []
+    # DEBUG: Show sample of timeline
+    print(f"\n📋 Timeline has {len(timeline)} events")
+    print("\n Sample events (first 5):")
+    for i, event in enumerate(timeline[:5]):
+        print(f"   {i+1}. {event['timestamp']} - {event['source']} - Contact: {event.get('contact', 'Unknown')}")
     
-    coordinated_patterns = []
-    
-    # Group communications by contact
-    communications_by_contact = defaultdict(list)
+    # Dictionary to store communications by contact
+    contact_comms = {}
     
     for event in timeline:
         try:
-            source, destination, medium, direction, content = get_communication_details(event, user_phone)
+            # Get the contact identifier
+            contact = None
             
-            # Determine which contact is not the user
-            user_id = user_phone if user_phone else "User's Phone"
-            contact = destination if source == user_id else source
+            if event['source'] == 'EMAIL':
+                # For emails, try to get from sender/recipient
+                sender = event.get('sender', '')
+                recipient = event.get('recipient', '')
+                
+                # If user is involved, the other party is the contact
+                if user_phone and user_phone.replace('+91', '') + '@user.com' in sender:
+                    contact = recipient
+                elif user_phone and user_phone.replace('+91', '') + '@user.com' in recipient:
+                    contact = sender
+                else:
+                    # If user not involved, use sender as contact
+                    contact = sender
+            else:
+                # For SMS and Calls, use the contact field
+                contact = event.get('contact', 'Unknown')
             
-            # Skip if contact is user
-            if contact == user_id:
-                continue
-            
-            # Extract topic (with error handling)
-            topic_info = None
-            try:
-                topic_info = extract_topic_from_content(content, medium)
-            except:
-                pass
-            
-            communications_by_contact[contact].append({
-                'event': event,
-                'timestamp': event['timestamp'],
-                'medium': medium,
-                'direction': 'FROM_USER' if source == user_id else 'TO_USER',
-                'content': content[:100] if content else "No content",
-                'topic': topic_info
-            })
+            # Clean up contact
+            if contact and contact != 'Unknown' and contact != 'User\'s Phone':
+                if contact not in contact_comms:
+                    contact_comms[contact] = {
+                        'channels': set(),
+                        'count': 0,
+                        'first_seen': event['timestamp'],
+                        'last_seen': event['timestamp'],
+                        'events': []
+                    }
+                
+                # Update contact info
+                contact_comms[contact]['channels'].add(event['source'])
+                contact_comms[contact]['count'] += 1
+                if event['timestamp'] < contact_comms[contact]['first_seen']:
+                    contact_comms[contact]['first_seen'] = event['timestamp']
+                if event['timestamp'] > contact_comms[contact]['last_seen']:
+                    contact_comms[contact]['last_seen'] = event['timestamp']
+                
+                contact_comms[contact]['events'].append({
+                    'time': event['timestamp'],
+                    'source': event['source'],
+                    'content': event.get('content', '')[:30]
+                })
         except Exception as e:
-            print(f"  Warning: Error processing event: {e}")
+            print(f"   Error: {e}")
             continue
     
-    # Analyze each contact's communication patterns
-    for contact, comms in communications_by_contact.items():
-        if len(comms) < 3:  # Need at least 3 communications for pattern
-            continue
-        
-        # Sort by timestamp
-        comms_sorted = sorted(comms, key=lambda x: x['timestamp'])
-        
-        # Look for multi-channel sequences using sliding window
-        for i in range(len(comms_sorted) - 2):
-            try:
-                current = comms_sorted[i]
-                next1 = comms_sorted[i + 1]
-                next2 = comms_sorted[i + 2]
-                
-                # Check if all within time window (e.g., 30 minutes)
-                time_diff1 = (next1['timestamp'] - current['timestamp']).total_seconds() / 60
-                time_diff2 = (next2['timestamp'] - next1['timestamp']).total_seconds() / 60
-                
-                if time_diff1 <= time_window_minutes and time_diff2 <= time_window_minutes:
-                    # Check if using different media
-                    media_used = {current['medium'], next1['medium'], next2['medium']}
-                    
-                    if len(media_used) >= 2:  # At least 2 different media
-                        # Check for topic consistency
-                        topics = []
-                        for comm in [current, next1, next2]:
-                            if comm['topic'] and comm['topic'].get('main_topics'):
-                                topics.extend(comm['topic']['main_topics'])
-                        
-                        pattern = {
-                            'contact': contact,
-                            'time_start': current['timestamp'],
-                            'time_end': next2['timestamp'],
-                            'duration_minutes': (next2['timestamp'] - current['timestamp']).total_seconds() / 60,
-                            'sequence': [
-                                (current['medium'], current['direction'], current['content'][:50]),
-                                (next1['medium'], next1['direction'], next1['content'][:50]),
-                                (next2['medium'], next2['direction'], next2['content'][:50])
-                            ],
-                            'media_used': list(media_used),
-                            'common_topics': [],
-                            'pattern_type': 'MULTI_CHANNEL_COORDINATED',
-                            'risk_level': 'HIGH' if len(media_used) == 3 else 'MEDIUM'
-                        }
-                        
-                        # Find common topics (if any)
-                        if topics:
-                            topic_counts = Counter(topics)
-                            pattern['common_topics'] = [topic for topic, count in topic_counts.items() if count > 1]
-                        
-                        coordinated_patterns.append(pattern)
-            except Exception as e:
-                print(f"  Warning: Error analyzing sequence: {e}")
-                continue
+    # DEBUG: Show contact statistics
+    print(f"\n📊 CONTACT STATISTICS:")
+    print(f"   Total unique contacts: {len(contact_comms)}")
     
-    # Print summary
-    if coordinated_patterns:
-        high_risk = [p for p in coordinated_patterns if p['risk_level'] == 'HIGH']
-        medium_risk = [p for p in coordinated_patterns if p['risk_level'] == 'MEDIUM']
+    # Show sample contacts
+    sample_contacts = list(contact_comms.items())[:5]
+    print("\n Sample contacts:")
+    for contact, info in sample_contacts:
+        print(f"   • {contact[:30]}... - Channels: {info['channels']} - Events: {info['count']}")
+    
+    # Find multi-channel contacts
+    multi_channel = []
+    for contact, info in contact_comms.items():
+        if len(info['channels']) >= 2:
+            # Determine risk level based on channels used
+            risk_level = 'MEDIUM'
+            if len(info['channels']) == 3:
+                risk_level = 'HIGH'
+            elif len(info['channels']) == 2:
+                # Check if it's SMS+Call combination (more suspicious)
+                if 'SMS' in info['channels'] and 'CALL' in info['channels']:
+                    risk_level = 'HIGH' if info['count'] > 20 else 'MEDIUM'
+            
+            # Get sequence of communications
+            sequence = []
+            sorted_events = sorted(info['events'], key=lambda x: x['time'])
+            for event in sorted_events[:5]:  # First 5 events
+                direction = 'FROM_USER' if user_phone and contact == user_phone else 'TO_USER'
+                sequence.append((event['source'], direction, event['content']))
+            
+            multi_channel.append({
+                'contact': contact,
+                'channels': list(info['channels']),
+                'channel_count': len(info['channels']),
+                'total_events': info['count'],
+                'first_seen': info['first_seen'],
+                'last_seen': info['last_seen'],
+                'events': sorted_events,
+                'sequence': sequence,
+                'risk_level': risk_level,
+                'time_start': info['first_seen'],
+                'time_end': info['last_seen'],
+                'media_used': list(info['channels']),
+                'duration_minutes': (info['last_seen'] - info['first_seen']).total_seconds() / 60,
+                'common_topics': []  # You can add topic extraction here if needed
+            })
+    
+    # Display results
+    print(f"\n{'='*70}")
+    print(" FINAL RESULTS")
+    print(f"{'='*70}")
+    print(f"\n📊 MULTI-CHANNEL PATTERN SUMMARY:")
+    print(f"  • Total unique contacts: {len(contact_comms)}")
+    print(f"  • Contacts using multiple channels: {len(multi_channel)}")
+    
+    if multi_channel:
+        # Count by channel type
+        channel_counts = {}
+        for m in multi_channel:
+            key = len(m['channels'])
+            channel_counts[key] = channel_counts.get(key, 0) + 1
         
-        print(f"\n📊 **PATTERN DETECTION SUMMARY:**")
-        print(f"   • Total patterns found: {len(coordinated_patterns)}")
-        print(f"   • HIGH RISK (3 channels): {len(high_risk)}")
-        print(f"   • MEDIUM RISK (2 channels): {len(medium_risk)}")
+        print(f"\n  • Channel distribution:")
+        for channels, count in sorted(channel_counts.items()):
+            print(f"     - {channels} channels: {count} contacts")
         
-        # Show example of SMS→Call→Email pattern if exists
-        sms_call_email = [p for p in high_risk if set(['SMS', 'CALL', 'EMAIL']).issubset(p['media_used'])]
-        if sms_call_email:
-            print(f"\n⚠️ **EXAMPLE SMS→CALL→EMAIL PATTERN DETECTED:**")
-            example = sms_call_email[0]
-            print(f"   Contact: {example['contact'][:30]}...")
-            print(f"   Time window: {example['duration_minutes']:.1f} minutes")
-            print(f"   Sequence:")
-            for j, (medium, direction, content) in enumerate(example['sequence'], 1):
-                arrow = "→" if j < 3 else ""
-                print(f"      {j}. {medium} {arrow}")
+        # Show examples
+        print("\n📌 DETAILED PATTERNS:")
+        for i, m in enumerate(multi_channel[:10], 1):
+            print(f"\n  Pattern {i}: {m['contact'][:40]}...")
+            print(f"     Channels: {', '.join(m['channels'])}")
+            print(f"     Risk Level: {m['risk_level']}")
+            print(f"     Total communications: {m['total_events']}")
+            print(f"     Time span: {(m['last_seen'] - m['first_seen']).days} days")
+            
+            # Show sequence of communications
+            print("     Communication sequence:")
+            for j, event in enumerate(m['events'][:3], 1):
+                print(f"       {j}. {event['time'].strftime('%Y-%m-%d %H:%M')} - {event['source']}")
+            
+            if m['total_events'] > 3:
+                print(f"       ... and {m['total_events'] - 3} more")
     else:
-        print("\n✅ No coordinated multi-channel patterns detected.")
+        print("\n❌ NO MULTI-CHANNEL PATTERNS FOUND!")
+        print("\n🔍 DEBUGGING INFO:")
+        print("   This means every contact only uses ONE channel.")
+        print("   Possible issues:")
+        print("   1. Your data files don't have the same contact in multiple channels")
+        print("   2. Contact identification is failing")
+        print("   3. User phone number not matching data format")
+        
+        # Show first few contacts for debugging
+        print("\n📋 First 10 contacts (to check format):")
+        for i, (contact, info) in enumerate(list(contact_comms.items())[:10]):
+            print(f"   {i+1}. {contact[:30]}... - Channels: {info['channels']}")
     
-    return coordinated_patterns
+    return multi_channel
 
 def enhanced_suspicious_analysis(timeline, user_phone=None):
     """Enhanced analysis including multi-channel patterns"""
@@ -3181,47 +3211,113 @@ def main():
                 suspicious_communications_analysis(timeline, user_phone)
 
             elif choice == '4':
-                coordinated_patterns = detect_coordinated_communications(timeline, user_phone)
-                if coordinated_patterns:
-                 print(f"\n🚨 **DETECTED {len(coordinated_patterns)} MULTI-CHANNEL PATTERNS**")
-        
-                # Initialize counters
-                high_risk = []
-                medium_risk = []
-        
-                # Group by risk level
-                for pattern in coordinated_patterns:
-                  if pattern['risk_level'] == 'HIGH':
-                      high_risk.append(pattern)
-                  else:
-                      medium_risk.append(pattern)
-        
-                      print(f"\n📊 **RISK DISTRIBUTION:**")
-                      print(f"   🔴 HIGH RISK: {len(high_risk):,} patterns (SMS → Call → Email)")
-                      print(f"   🟡 MEDIUM RISK: {len(medium_risk):,} patterns (2-channel coordination)")
-        
-                    # Show most suspicious pattern
-                      if high_risk:
-                             print(f"\n⚠️ **MOST SUSPICIOUS PATTERN DETECTED:**")
-                             pattern = high_risk[0]
-                             print(f"   Contact: {pattern['contact']}")
-                             print(f"   Time: {pattern['time_start'].strftime('%Y-%m-%d %H:%M')}")
-                             print(f"   Pattern: {' → '.join([seq[0] for seq in pattern['sequence']])}")
-            
-                      # Ask if user wants to see details
-                      show_details = input("\nShow detailed pattern? (y/n): ").lower()
-                      if show_details == 'y':
-                         print(f"\n📋 **DETAILED SEQUENCE:**")
-                         for i, (medium, direction, content) in enumerate(pattern['sequence'], 1):
-                             dir_text = "User → Contact" if direction == 'FROM_USER' else "Contact → User"
-                             print(f"   {i}. {medium.upper()}: {dir_text}")
-                             print(f"      Content: {content}...")
-                      else:
-                         print(f"\n📋 **MEDIUM RISK PATTERNS:**")
-                         for i, pattern in enumerate(medium_risk[:3], 1):
-                             print(f"\n   {i}. Contact: {pattern['contact'][:30]}...")
-                             print(f"      Time: {pattern['time_start'].strftime('%H:%M')} - {pattern['time_end'].strftime('%H:%M')}")
-                             print(f"      Channels: {' → '.join(pattern['media_used'])}")
+                multi_channel_patterns = detect_multi_channel_patterns(timeline, user_phone)
+                
+                if multi_channel_patterns:
+                    print(f"\n✅ DETECTED {len(multi_channel_patterns)} MULTI-CHANNEL PATTERNS")
+                    
+                    # Initialize counters
+                    high_risk = []
+                    medium_risk = []
+                    
+                    # Group by risk level
+                    for pattern in multi_channel_patterns:
+                        if pattern['risk_level'] == 'HIGH':
+                            high_risk.append(pattern)
+                        else:
+                            medium_risk.append(pattern)
+                    
+                    print(f"\n📊 **RISK DISTRIBUTION:**")
+                    print(f"   🔴 HIGH RISK: {len(high_risk):,} patterns (SMS → Call → Email or High volume SMS+Call)")
+                    print(f"   🟡 MEDIUM RISK: {len(medium_risk):,} patterns (2-channel coordination)")
+                    
+                    # Show all HIGH RISK patterns with details
+                    if high_risk:
+                        print(f"\n{'='*80}")
+                        print(" 🔴 HIGH RISK MULTI-CHANNEL PATTERNS (DETAILED)")
+                        print(f"{'='*80}")
+                        
+                        for idx, pattern in enumerate(high_risk[:5], 1):  # Show top 5 high risk patterns
+                            print(f"\n{idx}. 🚨 **HIGH RISK PATTERN**")
+                            print(f"   Contact: {pattern['contact']}")
+                            print(f"   Time Window: {pattern['time_start'].strftime('%Y-%m-%d %H:%M')} to {pattern['time_end'].strftime('%Y-%m-%d %H:%M')}")
+                            print(f"   Duration: {pattern['duration_minutes']:.1f} minutes")
+                            print(f"   Channels Used: {' → '.join(pattern['media_used'])}")
+                            print(f"   Total Communications: {pattern['total_events']}")
+                            
+                            print(f"\n   📋 **COMMUNICATION SEQUENCE:**")
+                            for i, (medium, direction, content) in enumerate(pattern['sequence'][:10], 1):
+                                dir_symbol = "📤" if direction == 'FROM_USER' else "📥"
+                                dir_text = "User → Contact" if direction == 'FROM_USER' else "Contact → User"
+                                print(f"      {i}. {dir_symbol} {medium}: {dir_text}")
+                                if content:
+                                    print(f"         Content: {content[:100]}...")
+                            
+                            if len(pattern['sequence']) > 10:
+                                print(f"      ... and {len(pattern['sequence']) - 10} more events")
+                            
+                            # Forensic interpretation
+                            print(f"\n   🔍 **FORENSIC ANALYSIS:**")
+                            if len(pattern['media_used']) == 3:
+                                print(f"      • Full 3-channel coordination detected")
+                                print(f"      • Pattern: {' → '.join([seq[0] for seq in pattern['sequence'][:3]])}")
+                                print(f"      • This could indicate: Urgent coordination, crisis management, or covert planning")
+                            elif 'SMS' in pattern['media_used'] and 'CALL' in pattern['media_used']:
+                                print(f"      • SMS+Call coordination detected")
+                                print(f"      • High volume of {pattern['total_events']} interactions")
+                                print(f"      • This could indicate: Close personal/business relationship or frequent coordination")
+                            print("-" * 80)
+                        
+                        if len(high_risk) > 5:
+                            print(f"\n... and {len(high_risk) - 5} more high-risk patterns")
+                    
+                    # Show MEDIUM RISK patterns summary
+                    if medium_risk:
+                        print(f"\n{'='*80}")
+                        print(" 🟡 MEDIUM RISK MULTI-CHANNEL PATTERNS (SUMMARY)")
+                        print(f"{'='*80}")
+                        
+                        # Group medium risk patterns by channel combination
+                        channel_groups = {}
+                        for pattern in medium_risk:
+                            channel_key = '+'.join(sorted(pattern['media_used']))
+                            if channel_key not in channel_groups:
+                                channel_groups[channel_key] = []
+                            channel_groups[channel_key].append(pattern)
+                        
+                        for channel_key, patterns in channel_groups.items():
+                            print(f"\n📊 **{channel_key} Patterns:** {len(patterns)} contacts")
+                            print(f"   Sample contacts:")
+                            for pattern in patterns[:3]:  # Show first 3 examples
+                                print(f"      • {pattern['contact'][:40]}...")
+                                print(f"        Events: {pattern['total_events']} | Duration: {pattern['duration_minutes']:.1f} min")
+                                print(f"        Sequence: {' → '.join([seq[0] for seq in pattern['sequence'][:3]])}")
+                            
+                            if len(patterns) > 3:
+                                print(f"        ... and {len(patterns) - 3} more contacts")
+                        
+                        # Show detailed view for top medium risk patterns
+                        print(f"\n📋 **TOP 5 MEDIUM RISK PATTERNS (DETAILED):**")
+                        for idx, pattern in enumerate(sorted(medium_risk, key=lambda x: x['total_events'], reverse=True)[:5], 1):
+                            print(f"\n   {idx}. Contact: {pattern['contact'][:50]}")
+                            print(f"      Channels: {' → '.join(pattern['media_used'])}")
+                            print(f"      Total Events: {pattern['total_events']}")
+                            print(f"      First: {pattern['first_seen'].strftime('%Y-%m-%d %H:%M')}")
+                            print(f"      Last: {pattern['last_seen'].strftime('%Y-%m-%d %H:%M')}")
+                            print(f"      Communication pattern:")
+                            
+                            # Show first few events in sequence
+                            for j, event in enumerate(pattern['events'][:3], 1):
+                                direction = "OUT" if event.get('direction') == 'FROM_USER' else "IN"
+                                print(f"         {j}. {event['time'].strftime('%H:%M')} - {event['source']} ({direction})")
+                
+                else:
+                    print("\n❌ No multi-channel patterns detected.")
+                    print("\n📊 **COMMUNICATION STATISTICS:**")
+                    print(f"   Total Events: {len(timeline)}")
+                    print(f"   SMS Messages: {len([e for e in timeline if e['source'] == 'SMS'])}")
+                    print(f"   Phone Calls: {len([e for e in timeline if e['source'] == 'CALL'])}")
+                    print(f"   Emails: {len([e for e in timeline if e['source'] == 'EMAIL'])}")
             
             elif choice == '5':
                 create_simple_visualizations(timeline, sms_data, call_data, email_data)
@@ -3237,7 +3333,7 @@ def main():
                 break
             
             else:
-                print(" Invalid option. Please select 1-6.")
+                print(" Invalid option. Please select 1-7.")
     
     except KeyboardInterrupt:
         print("\n\n Analysis interrupted by user.")
