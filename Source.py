@@ -2593,7 +2593,7 @@ def suspicious_communications_analysis(timeline, user_phone=None):
 
     print("")
     
-    coordinated_patterns = detect_coordinated_communications(timeline, user_phone)
+    coordinated_patterns = detect_multi_channel_patterns(timeline, user_phone)
     
     if coordinated_patterns:
         print(f"\n🚨 **CRITICAL FINDING:** {len(coordinated_patterns):,} coordinated multi-channel patterns detected!")
